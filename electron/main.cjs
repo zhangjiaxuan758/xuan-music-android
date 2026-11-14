@@ -1,3 +1,8 @@
+// ==================================================================
+// 小轩音乐 · 闭源专有软件
+// 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
+// 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
+// ==================================================================
 const { app, BrowserWindow, ipcMain, session, screen, dialog, shell, nativeImage, desktopCapturer, Menu, Tray, nativeTheme } = require('electron');
 const fs = require('fs');
 const http = require('http');
@@ -161,7 +166,7 @@ const VOICE_INPUT_PAUSE_ENABLED_SETTING_KEY = 'VOICE_INPUT_PAUSE_ENABLED';
 
 const DEFAULT_STAGE_API_PORT = 32107;
 const DEFAULT_OBS_BROWSER_SOURCE_PORT = 32108;
-const XUAN_RELEASES_URL = 'https://music.jrr.lol';
+const XUAN_RELEASES_URL = '__XUAN_SERVER_BASE__';
 const XUAN_UPDATE_REPOSITORY = {
   owner: 'xuan',
   repo: 'music',

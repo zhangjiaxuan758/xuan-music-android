@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# ==================================================================
+# 小轩音乐 · 闭源专有软件
+# 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
+# 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
+# ==================================================================
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,7 +30,7 @@ pkgbase = xuan-music-bin
 	pkgdesc = Lyrics Reimagine desktop app packaged from prebuilt releases
 	pkgver = ${version}
 	pkgrel = 1
-	url = https://music.jrr.lol
+	url = __XUAN_SERVER_BASE__
 	arch = x86_64
 	license = AGPL
 	depends = alsa-lib
@@ -35,7 +40,7 @@ pkgbase = xuan-music-bin
 	optdepends = xdg-utils: desktop integration helpers
 	provides = xuan-music
 	conflicts = xuan-music
-	source = https://music.jrr.lol
+	source = __XUAN_SERVER_BASE__
 	source = xuan-music.desktop
 	source = xuan-music.png
 	sha256sums = SKIP

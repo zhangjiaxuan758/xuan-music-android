@@ -1,3 +1,8 @@
+// ==================================================================
+// 小轩音乐 · 闭源专有软件
+// 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
+// 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
+// ==================================================================
 import { describe, expect, it } from 'vitest';
 
 // test/unit/electron/updateChannels.test.ts
@@ -43,7 +48,7 @@ describe('release update channels', () => {
     });
 
     it('opens rolling prereleases instead of manufacturing a semver tag', () => {
-        const releasesUrl = 'https://music.jrr.lol/download';
+        const releasesUrl = '__XUAN_SERVER_BASE__/download';
 
         expect(getReleaseUrl('preview', '0.7.0-beta.123', releasesUrl)).toBe(`${releasesUrl}/tag/preview`);
         expect(getReleaseUrl('canary', '0.7.0-alpha.123', releasesUrl)).toBe(`${releasesUrl}/tag/canary`);
@@ -55,13 +60,13 @@ describe('release update channels', () => {
 
         expect(getUpdateProviderConfig(resolveReleaseChannel('0.7.0-beta.123', 'preview'), repository)).toEqual({
             provider: 'generic',
-            url: 'https://music.jrr.lol/download/',
+            url: '__XUAN_SERVER_BASE__/download/',
             channel: 'beta',
             useMultipleRangeRequest: false,
         });
         expect(getUpdateProviderConfig(resolveReleaseChannel('0.7.0-alpha.123', 'canary'), repository)).toEqual({
             provider: 'generic',
-            url: 'https://music.jrr.lol/download/',
+            url: '__XUAN_SERVER_BASE__/download/',
             channel: 'alpha',
             useMultipleRangeRequest: false,
         });

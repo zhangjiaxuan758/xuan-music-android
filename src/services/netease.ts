@@ -1,3 +1,8 @@
+// ==================================================================
+// 小轩音乐 · 闭源专有软件
+// 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
+// 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
+// ==================================================================
 import { NeteaseUser, NeteasePlaylist, NoCopyrightRecommendation, SongPrivilege, SongResult } from "../types";
 import { readProviderSessionValue, removeProviderSessionValue, writeProviderSessionValue } from './onlineMusic/providerStorage';
 import QRCode from 'qrcode';
@@ -16,7 +21,7 @@ let songCopyrightRecommendationApiSupported: boolean | null = null;
 // 转发到对应 /api 业务接口。二维码由官方域名生成、播放链接由官方直返，
 // 因此不存在第三方实例机房 IP 被风控的问题。
 const OFFICIAL_HOST = 'https://music.163.com';
-// 敏感信息（eapiKey / eapiSalt / 开放平台密钥）全部保存在服务端 music.jrr.lol，
+// 敏感信息（eapiKey / eapiSalt / 开放平台密钥）全部保存在服务端 __XUAN_SERVER_HOST__，
 // 客户端不再持有任何密钥：所有官方请求由服务端加密转发。
 import { eapiRequest } from './xuanServer';
 import { EP } from './secretBox';

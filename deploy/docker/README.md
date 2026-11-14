@@ -1,3 +1,9 @@
+<!--
+小轩音乐 · 闭源专有软件
+主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
+本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
+-->
+
 # Xuan Web Docker 部署
 
 当前目录提供面向 Docker 部署的完整 Web 堆栈：前端网关、Xuan Web API、在线音乐接口和独立的 Sync Server。对外只发布 Web 网关与 Sync Server 两个端口，其余服务仅通过 Docker 网络互访。
@@ -11,10 +17,10 @@ mkdir xuan-docker
 cd xuan-docker
 
 curl -fL \
-  https://music.jrr.lol/deploy/compose.yaml \
+  __XUAN_SERVER_BASE__/deploy/compose.yaml \
   -o compose.yaml
 curl -fL \
-  https://music.jrr.lol/deploy/.env.example \
+  __XUAN_SERVER_BASE__/deploy/.env.example \
   -o .env
 ```
 

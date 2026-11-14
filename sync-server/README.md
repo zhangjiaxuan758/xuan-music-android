@@ -1,3 +1,9 @@
+<!--
+小轩音乐 · 闭源专有软件
+主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
+本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
+-->
+
 # Xuan Sync Server
 
 这是 Xuan 的官方同步服务端实现。本服务以“多端同构”为目标设计，底层逻辑完全一致。
@@ -51,7 +57,7 @@ openssl rand -hex 16
 
 零成本、免服务器的 Serverless 部署。当前仓库已经提供安装脚本，可以自动完成 D1 创建、`wrangler.local.toml` 生成、Secret 注入和最终部署，推荐优先使用脚本。
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://music.jrr.lol)
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=__XUAN_SERVER_BASE__)
 
 > [!WARNING]
 > 一键部署按钮可能无法自动完成 D1 数据库的绑定与 Token 注入。如果使用一键部署按钮，你需要**在部署后**前往 Cloudflare 控制台手动创建 D1 数据库、重新配置绑定变量，并设置 `SYNC_TOKEN` 环境变量。因此，**更推荐使用下方的安装脚本**。

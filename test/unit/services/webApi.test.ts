@@ -1,3 +1,8 @@
+// ==================================================================
+// 小轩音乐 · 闭源专有软件
+// 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
+// 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
+// ==================================================================
 import { describe, expect, it } from 'vitest';
 import { resolveXuanApiUrl } from '@/services/webApi';
 
@@ -6,9 +11,9 @@ import { resolveXuanApiUrl } from '@/services/webApi';
 describe('resolveXuanApiUrl', () => {
   it('normalizes the configured remote base and endpoint', () => {
     expect(resolveXuanApiUrl('/api/lyric-proxy', {
-      apiBase: ' https://music.jrr.lol/api/ ',
+      apiBase: ' __XUAN_SERVER_BASE__/api/ ',
       capacitorAndroid: true,
-    })).toBe('https://music.jrr.lol/api/lyric-proxy');
+    })).toBe('__XUAN_SERVER_BASE__/api/lyric-proxy');
   });
 
   it('keeps the same-origin Web fallback when no base is configured', () => {

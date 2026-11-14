@@ -4,7 +4,7 @@
   "description": "小轩音乐 Android 客户端",
   "author": {
     "name": "xuan-music",
-    "email": "xuan@music.jrr.lol"
+    "email": "xuan@__XUAN_SERVER_HOST__"
   },
   "private": true,
   "version": "1.7.10",
