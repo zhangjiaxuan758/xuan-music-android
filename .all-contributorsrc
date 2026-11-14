@@ -8,7 +8,7 @@
     {
       "login": "zhangjiaxuan758",
       "name": "小轩音乐",
-      "profile": "https://music.jrr.lol",
+      "profile": "__XUAN_SERVER_BASE__",
       "contributions": ["code", "doc", "design", "maintenance"]
     }
   ],

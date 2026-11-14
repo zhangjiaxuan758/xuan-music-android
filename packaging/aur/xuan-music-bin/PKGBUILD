@@ -3,7 +3,7 @@ pkgver=0.1.4
 pkgrel=1
 pkgdesc="Lyrics Reimagine desktop app packaged from prebuilt releases"
 arch=('x86_64')
-url="https://music.jrr.lol"
+url="__XUAN_SERVER_BASE__"
 license=('AGPL')
 depends=(
   'alsa-lib'
@@ -17,7 +17,7 @@ optdepends=(
 provides=('xuan-music')
 conflicts=('xuan-music')
 source=(
-  "https://music.jrr.lol"
+  "__XUAN_SERVER_BASE__"
   'xuan-music.desktop'
   'xuan-music.png'
 )
