@@ -1,30 +1,25 @@
-# 小轩音乐 · Android
+# 小轩音乐 · 安卓客户端（脱敏源码）
 
+本仓库仅含**安卓客户端**脱敏源码。不含管理端、服务端、网页端，不含任何真实服务器地址、
+密钥、口令、证书指纹或 GitHub token；所有敏感值以 `__XUAN_*__` 占位符表示。
 
-小轩音乐 1.6.5（包名 `com.music.xuan`），基于 Capacitor 的 Android 横屏全屏音乐播放器。
+> **本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。**
+> 主服务地址（裸域名，不含路径）以 `__XUAN_SERVER_BASE__` 占位，`inject_private.py` 注入真实值。
 
-## 交付物
+## 每个源码文件均嵌入三项
+每个 `.ts/.cpp/.cjs/.py/.sh` 文件头部统一带有：主链接占位符、闭源专有软件声明、
+强行逆向的法律责任提示。占位符在构建部署时被替换为真实裸域名，因此成品中每个文件
+都指向你的主链接，而公开仓库始终不泄露它。
 
-- 安装包：`小轩音乐_v1.6.5.apk`（V1 + V2 + V3 签名，同一证书可覆盖安装）
-- 源码工程：本目录
-- 签名证书、构建步骤、安全说明：`签名信息.txt`
+## 结构
+- `src/cpp/xuan_net.cpp`：C++ 网络核心（SHA-256 / HMAC / 引导验签 / 路由键派生），编译为零 import wasm
+- `src/services/routeMap.ts`：裸域名引导，`X-Xuan-Role: app`，5 分钟轮换动态路由表
+- `src/services/secretBox.ts`：主链接等敏感值的密文表（编码占位符）
+- `src/services/xuanNet.ts` / `wasm/xuanNetWasm.ts`：C++ 引擎封装
+- `src/services/xuanServer.ts` / `appAttest.ts` / `appUpdater.ts`：签名、证明握手、下载完整性校验
+- `shared/` 共用模块
 
-## 主要特性
-
-- 强制横屏 + 沉浸式全屏，摄像头挖孔区域铺满，适配 Android 10 ~ Android 16
-- 网易云音乐官方 eapi 直连，扫码登录，安装即用、无需配置后端
-- 只保留网易云音源；搜索首屏 50 首，滑到底才显示「加载更多」
-- 会员专享 / 付费数字专辑 / 无版权 / 地区限制按网易云官方口径提示，不误报「已下架」
-- 首页「开发者推荐」固定 12 首，可在「设置 → 常规」里开关显隐
-- 播放页双击两下进入 / 退出沉浸模式；右下角常显返回上一页按钮
-- 播放 / 暂停音量淡入淡出
-
-## 二次构建
-
-见 `签名信息.txt` 中的「二次构建步骤」。
-
-## 关于仓库
-
-本项目已去除上游仓库的全部引用。若要展示你自己的 GitHub 仓库，把地址填入
-`src/components/modal/AiHelpPromptModal.tsx` 的 `XUAN_REPOSITORY_URL`，
-并按需更新 `package.json` 的 repository 字段即可。
+## 本地构建
+1. 复制 `private.config.example.json` 为 `private.config.json` 并填真实值（已 gitignore）。
+2. `python3 inject_private.py` → 明文占位符替换；`python3 gen_secretbox.py` → **必须**，重建密文表。
+3. 完整工程依赖私有构建链，本仓库为核心模块脱敏快照。

@@ -1,3 +1,8 @@
+// ==================================================================
+// 小轩音乐 · 闭源专有软件
+// 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
+// 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
+// ==================================================================
 /**
  * 客户端在线更新
  * ------------------------------------------------------------------
@@ -6,7 +11,7 @@
  *
  * 覆盖安装：新 APK 与旧版同包名 com.music.xuan、同一签名密钥，
  * Android 系统会直接升级覆盖，不会出现两个软件。
- * 更新地址与所有接口均走 https://music.jrr.lol。
+ * 更新地址与所有接口均走 __XUAN_SERVER_BASE__。
  *
  * 下载通道：优先 WebView fetch 流式下载（有进度、内存友好）；失败时回退到
  * CapacitorHttp（原生 HTTP，与取票据同一 UA，不受 WebView CORS / UA 差异影响）。
@@ -14,12 +19,18 @@
 
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { checkUpdate, downloadUrl, initXuanServer, type UpdateInfo } from './xuanServer';
+import { ud, udVer, udTheme } from './remoteResources';
 
 const XuanNative = registerPlugin<{
   installApk(options: { path: string }): Promise<{ ok: boolean }>;
   getApkVersion(): Promise<{ versionCode: number; versionName: string }>;
   updateMedia(options: MediaOptions): Promise<void>;
   hideMedia(): Promise<void>;
+  /** Android：启动后台更新前台服务（切后台/锁屏继续下载 + 通知栏进度） */
+  backgroundDownload(options: {
+    url: string; fileName: string; expectedSize: number;
+    expectedSha256: string; expectedSign: string; versionName: string;
+  }): Promise<{ ok: boolean }>;
 } & Record<string, any>>('XuanNative');
 
 export interface MediaOptions {
@@ -113,32 +124,34 @@ function installForceGuard() {
 function showUpdateDialog(info: UpdateInfo, onConfirm: () => void) {
   if (dialogOpen) return;
   dialogOpen = true;
+  // 弹窗文案 / 主题优先取服务端远程资源，缺失一律回退内置默认
+  const th = udTheme();
   // force 由服务端更新段下发（管理端两个「强制更新」开关共同控制）。
   // 强制时：只有一个「立即更新」按钮、无取消、点遮罩/Esc/返回键都不关闭，必须更新。
   const forced = !!info.force;
   const overlay = el('div', {
     position: 'fixed', inset: '0', zIndex: '99999', display: 'flex',
-    alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.62)',
+    alignItems: 'center', justifyContent: 'center', background: th.overlay,
     backdropFilter: 'blur(6px)', fontFamily: 'system-ui, -apple-system, sans-serif',
   });
   const card = el('div', {
-    width: 'min(420px, 86vw)', background: '#232326', color: '#f2f2f3',
+    width: 'min(420px, 86vw)', background: th.cardBg, color: th.cardFg,
     borderRadius: '18px', padding: '28px', boxShadow: '0 24px 70px rgba(0,0,0,.55)',
     border: '1px solid rgba(255,255,255,.08)',
   });
   const title = el('div', { fontSize: '19px', fontWeight: '700', marginBottom: '8px' },
-    forced ? '必须更新后才能继续使用' : '已有新版本');
-  const ver = el('div', { fontSize: '13px', color: '#a1a1a6', marginBottom: '14px' },
-    `新版本 ${info.versionName || ''}（${info.versionCode}）`);
+    forced ? ud('titleForce', '必须更新后才能继续使用') : ud('titleNew', '已有新版本'));
+  const ver = el('div', { fontSize: '13px', color: th.verColor, marginBottom: '14px' },
+    udVer(info.versionName || '', info.versionCode));
   const desc = el('div', {
-    fontSize: '13px', color: '#d0d0d4', lineHeight: '1.7', marginBottom: '24px',
+    fontSize: '13px', color: th.descColor, lineHeight: '1.7', marginBottom: '24px',
     maxHeight: '150px', overflowY: 'auto', whiteSpace: 'pre-wrap',
-  }, (info.changelog || '').trim() || DEFAULT_CHANGELOG);
+  }, (info.changelog || '').trim() || ud('defaultChangelog', DEFAULT_CHANGELOG));
   if (forced) {
     const hint = el('div', {
-      fontSize: '12px', color: '#f0b45a', lineHeight: '1.6', marginBottom: '16px',
+      fontSize: '12px', color: th.hintColor, lineHeight: '1.6', marginBottom: '16px',
       marginTop: '-10px',
-    }, '本次为强制更新，请更新到最新版本后继续使用。');
+    }, ud('forceHint', '本次为强制更新，请更新到最新版本后继续使用。'));
     card.append(hint);
   }
 
@@ -147,8 +160,8 @@ function showUpdateDialog(info: UpdateInfo, onConfirm: () => void) {
     const b = el('button', {
       padding: '10px 22px', borderRadius: '10px', border: 'none', cursor: 'pointer',
       fontSize: '14px', fontWeight: '600', transition: 'opacity .15s',
-      background: primary ? '#f2f2f3' : 'rgba(255,255,255,.10)',
-      color: primary ? '#1c1c1e' : '#e8e8ea',
+      background: primary ? th.primaryBg : th.secondaryBg,
+      color: primary ? th.primaryFg : th.secondaryFg,
     }, label) as HTMLButtonElement;
     b.onmouseenter = () => { b.style.opacity = '.82'; };
     b.onmouseleave = () => { b.style.opacity = '1'; };
@@ -159,15 +172,15 @@ function showUpdateDialog(info: UpdateInfo, onConfirm: () => void) {
   const close = () => { overlay.remove(); dialogOpen = false; releaseForceGuard(); };
   if (forced) {
     // 只有一个按钮，没有「取消」；关闭只发生在用户点击「立即更新」并开始下载后。
-    const only = btn('立即更新', true, () => { close(); onConfirm(); });
+    const only = btn(ud('btnForce', '立即更新'), true, () => { close(); onConfirm(); });
     only.style.flex = '1';
     row.append(only);
     installForceGuard();
   } else {
     // 取消：仅关闭弹窗，不记录任何状态 → 下次启动仍会重新弹
-    const cancel = btn('取消', false, () => { close(); });
+    const cancel = btn(ud('btnCancel', '取消'), false, () => { close(); });
     // 确定：关闭弹窗并立即开始下载/更新
-    const confirm = btn('确定', true, () => { close(); onConfirm(); });
+    const confirm = btn(ud('btnConfirm', '确定'), true, () => { close(); onConfirm(); });
     row.append(cancel, confirm);
   }
   card.append(title, ver, desc, row);
@@ -180,23 +193,28 @@ function showUpdateDialog(info: UpdateInfo, onConfirm: () => void) {
 
 interface ProgressUI {
   set: (pct: number, text: string) => void;
-  done: (ok: boolean, install: () => void, errMsg?: string, okLabel?: string, okHint?: string) => void;
+  /** onCancel：失败时额外提供「取消」按钮；传了即代表本次更新可被放弃。 */
+  done: (ok: boolean, install: () => void, errMsg?: string, okLabel?: string,
+         okHint?: string, onCancel?: () => void) => void;
 }
 
-function showProgressDialog(titleText = '正在下载更新'): ProgressUI {
+function showProgressDialog(titleText?: string): ProgressUI {
+  const th = udTheme();
+  const resolvedTitle = titleText ?? ud('dlTitle', '正在下载更新');
   const overlay = el('div', {
     position: 'fixed', inset: '0', zIndex: '99999', display: 'flex',
-    alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.62)',
+    alignItems: 'center', justifyContent: 'center', background: th.overlay,
     backdropFilter: 'blur(6px)', fontFamily: 'system-ui, -apple-system, sans-serif',
   });
   const card = el('div', {
-    width: 'min(420px, 86vw)', background: '#232326', color: '#f2f2f3',
+    width: 'min(420px, 86vw)', background: th.cardBg, color: th.cardFg,
     borderRadius: '18px', padding: '28px', border: '1px solid rgba(255,255,255,.08)',
   });
-  const title = el('div', { fontSize: '17px', fontWeight: '700', marginBottom: '16px' }, titleText);
-  const label = el('div', { fontSize: '12px', color: '#a1a1a6', marginBottom: '10px' }, '准备中…');
+  const title = el('div', { fontSize: '17px', fontWeight: '700', marginBottom: '16px' }, resolvedTitle);
+  const label = el('div', { fontSize: '12px', color: th.verColor, marginBottom: '10px' },
+    ud('dlPreparing', '准备中…'));
   const track = el('div', { height: '6px', borderRadius: '4px', background: 'rgba(255,255,255,.10)', overflow: 'hidden' });
-  const fill = el('div', { height: '100%', width: '0%', background: '#f2f2f3', transition: 'width .2s' });
+  const fill = el('div', { height: '100%', width: '0%', background: th.primaryBg, transition: 'width .2s' });
   track.append(fill);
   card.append(title, label, track);
   overlay.append(card);
@@ -204,19 +222,46 @@ function showProgressDialog(titleText = '正在下载更新'): ProgressUI {
 
   return {
     set: (pct, text) => { fill.style.width = `${Math.min(100, Math.max(0, pct))}%`; label.textContent = text; },
-    done: (ok, install, errMsg, okLabel, okHint) => {
-      title.textContent = ok ? '校验通过' : '下载失败';
+    done: (ok, install, errMsg, okLabel, okHint, onCancel) => {
+      title.textContent = ok ? ud('okTitle', '校验通过') : ud('failTitle', '下载失败');
       label.textContent = ok
-        ? (okHint || '安装包完整性校验通过，点击下方按钮安装')
-        : (errMsg ? `原因：${errMsg}（请检查网络后重试）` : '请检查网络后重试');
-      const b = el('button', {
-        marginTop: '20px', width: '100%', padding: '12px', borderRadius: '10px', border: 'none',
-        background: ok ? '#f2f2f3' : 'rgba(255,255,255,.10)',
-        color: ok ? '#1c1c1e' : '#e8e8ea', fontWeight: '600', fontSize: '14px', cursor: 'pointer',
-      }, ok ? (okLabel || '安装') : (errMsg ? '重试' : '关闭')) as HTMLButtonElement;
-      // 失败时也要执行回调：强制更新据此重新弹出「只有更新按钮」的强制窗，杜绝绕过。
-      b.onclick = () => { overlay.remove(); install(); };
-      card.append(b);
+        ? (okHint || ud('okHint', '安装包完整性校验通过，点击下方按钮安装'))
+        : (errMsg
+            ? ud('reasonTpl', '原因：{msg}（可重试，或取消本次更新）').replace('{msg}', errMsg)
+            : ud('failHint', '可重试，或取消本次更新'));
+      const mkBtn = (text: string, primary: boolean, cb: () => void,
+                     extra: Partial<CSSStyleDeclaration> = {}) => {
+        const b = el('button', {
+          padding: '12px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+          background: primary ? th.primaryBg : th.secondaryBg,
+          color: primary ? th.primaryFg : th.secondaryFg, fontWeight: '600', fontSize: '14px',
+          transition: 'opacity .15s', ...extra,
+        }, text) as HTMLButtonElement;
+        b.onmouseenter = () => { b.style.opacity = '.82'; };
+        b.onmouseleave = () => { b.style.opacity = '1'; };
+        b.onclick = cb;
+        return b;
+      };
+      if (!ok && onCancel) {
+        // 下载失败：两个按钮。「取消」= 放弃本次更新（不重试、不再弹更新窗）；
+        // 「重试」= 重新走一遍下载（install 回调即 retryUpdate）。
+        const row = el('div', { display: 'flex', gap: '10px', marginTop: '20px' });
+        row.append(
+          mkBtn(ud('btnCancel', '取消'), false, () => { overlay.remove(); onCancel(); }, { flex: '1' }),
+          mkBtn(ud('btnRetry', '重试'), true, () => { overlay.remove(); install(); }, { flex: '1' }),
+        );
+        card.append(row);
+      } else {
+        // 成功 / 强制更新失败：单按钮。强制更新不提供取消，点击重试会重新弹出
+        // 「只有更新按钮」的强制窗，杜绝绕过强制更新。
+        card.append(mkBtn(
+          ok ? (okLabel || ud('btnInstall', '安装'))
+             : (errMsg ? ud('btnRetry', '重试') : ud('btnClose', '关闭')),
+          ok,
+          () => { overlay.remove(); install(); },
+          { marginTop: '20px', width: '100%' },
+        ));
+      }
     },
   };
 }
@@ -224,13 +269,14 @@ function showProgressDialog(titleText = '正在下载更新'): ProgressUI {
 /** 最近一次下载响应头里的发布签名（服务端 X-Release-Sign），供 verifyDownload 与 check 下发值比对。 */
 let lastDownloadReleaseSign = '';
 
-/** 流式下载（有进度、内存友好）；expectedSize 作为 Content-Length 缺失时的分母兜底 */
-async function fetchApkBytes(url: string, ui: ProgressUI, expectedSize?: number): Promise<Uint8Array> {
+/** 单次流式下载（有进度、内存友好）；严格按 Content-Length 判定是否被截断。 */
+async function fetchOnce(url: string, ui: ProgressUI, expectedSize: number, attempt: number, maxAttempts: number): Promise<Uint8Array> {
   const res = await fetch(url, { credentials: 'omit', cache: 'no-store' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   lastDownloadReleaseSign = res.headers.get('X-Release-Sign') || '';
-  // 服务端 X-Accel 会带 Content-Length；缺失时用 checkUpdate 下发的登记大小，进度不会卡在半途
-  const total = Number(res.headers.get('content-length') || 0) || expectedSize || 0;
+  const declared = Number(res.headers.get('content-length') || 0);
+  // 服务端 X-Accel 会带 Content-Length；缺失时用 checkUpdate 下发的登记大小
+  const total = declared || expectedSize || 0;
   const reader = res.body?.getReader();
   if (!reader) throw new Error('不支持流式下载');
   const chunks: Uint8Array[] = [];
@@ -241,7 +287,17 @@ async function fetchApkBytes(url: string, ui: ProgressUI, expectedSize?: number)
     chunks.push(value);
     received += value.length;
     const pct = total ? (received / total) * 100 : Math.min(95, (received / (15 * 1048576)) * 100);
-    ui.set(pct, `已下载 ${(received / 1048576).toFixed(1)} MB${total ? ` / ${(total / 1048576).toFixed(1)} MB` : ''}`);
+    const a = (received / 1048576).toFixed(1);
+    const b = (total / 1048576).toFixed(1);
+    const prefix = attempt > 1 ? ud('dlRetryTag', '重试 {n}/{m} · ').replace('{n}', String(attempt)).replace('{m}', String(maxAttempts)) : '';
+    ui.set(pct, prefix + (total
+      ? ud('dlProgressTotal', '已下载 {a} MB / {b} MB').replace('{a}', a).replace('{b}', b)
+      : ud('dlProgress', '已下载 {a} MB').replace('{a}', a)));
+  }
+  // 截断判定：以 Content-Length 或服务端登记的发布大小为准，少一个字节都视为不完整。
+  const authoritative = declared || expectedSize || 0;
+  if (authoritative && received !== authoritative) {
+    throw new Error(`下载不完整（应为 ${authoritative} 字节，实际 ${received} 字节）`);
   }
   const all = new Uint8Array(received);
   let off = 0;
@@ -249,9 +305,28 @@ async function fetchApkBytes(url: string, ui: ProgressUI, expectedSize?: number)
   return all;
 }
 
+/** 严谨下载：网络抖动/连接中断导致的截断自动重试，杜绝「下载之后说不完整」。 */
+async function fetchApkBytes(url: string, ui: ProgressUI, expectedSize?: number): Promise<Uint8Array> {
+  const MAX = 3;
+  let lastErr: unknown = null;
+  for (let attempt = 1; attempt <= MAX; attempt++) {
+    try {
+      return await fetchOnce(url, ui, expectedSize || 0, attempt, MAX);
+    } catch (e) {
+      lastErr = e;
+      lastDownloadReleaseSign = '';
+      if (attempt < MAX) {
+        ui.set(0, ud('dlRetrying', '连接中断，正在重新下载…'));
+        await new Promise(r => setTimeout(r, 600 * attempt));
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr || '下载失败'));
+}
+
 /** 兜底：CapacitorHttp 原生下载，与取票据同一 UA，不受 WebView CORS / UA 差异影响 */
 async function nativeFallbackBytes(url: string, ui: ProgressUI): Promise<Uint8Array> {
-  ui.set(30, '切换原生通道下载…');
+  ui.set(30, ud('dlNative', '切换原生通道下载…'));
   const r = await CapacitorHttp.request({
     method: 'GET', url, responseType: 'blob',
     connectTimeout: 30000, readTimeout: 180000,
@@ -310,6 +385,75 @@ async function verifyDownload(bytes: Uint8Array, info: UpdateInfo, kind: 'apk' |
   }
 }
 
+/** 下载失败后点「取消」：放弃本次更新。
+ *  关闭失败弹窗后既不重试、也不再弹更新窗；不写入任何抑制标记，
+ *  下次冷启动仍会重新检查（升级通道需永久保留，随时可能发新版）。 */
+function cancelUpdate() {
+  toast('已取消更新');
+}
+
+/**
+ * Android 原生后台下载通道：点击更新后启动前台服务，
+ * App 切后台 / 锁屏 / 清除到后台都继续下载，通知栏显示「后台更新中」与进度，
+ * 完成后通知栏「点击安装」；WebView 在前台时进度窗同步显示。
+ *
+ * 返回 true 表示已接管（结果通过 updateEvent 事件处理，调用方直接 return）；
+ * 返回 false 表示原生通道不可用（旧包 / 启动失败），调用方回退 WebView 下载。
+ * 事件回调里 done/failed 都先摘掉监听，避免重试时重复注册。
+ */
+async function tryNativeBackgroundDownload(
+  info: UpdateInfo, url: string, ui: ProgressUI,
+): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return false;
+  let handle: { remove?: () => void } | undefined;
+  // done/failed 只处理一次（重试会重新走整条链路）
+  let settled = false;
+  try {
+    handle = (XuanNative as any).addListener?.('updateEvent', (e: any) => {
+      const type = String(e?.type || '');
+      if (type === 'progress') {
+        const received = Number(e?.received || 0);
+        const total = Number(e?.total || 0);
+        const pct = total > 0 ? (received / total) * 100 : Math.min(95, (received / (info.size || 15 * 1048576)) * 100);
+        const a = (received / 1048576).toFixed(1);
+        const b = (total / 1048576).toFixed(1);
+        ui.set(pct, total > 0
+          ? ud('dlProgressTotal', '已下载 {a} MB / {b} MB').replace('{a}', a).replace('{b}', b)
+          : ud('dlProgress', '已下载 {a} MB').replace('{a}', a));
+        return;
+      }
+      if (settled) return;
+      settled = true;
+      try { handle?.remove?.(); } catch { /* noop */ }
+      if (type === 'done' && e?.path) {
+        ui.set(100, '正在校验安装包完整性…');
+        ui.done(true, () => { void installApk(String(e.path)); }, undefined, '安装',
+          '后台下载完成，完整性校验通过；也可点击通知栏「安装」直接更新');
+      } else if (type === 'failed') {
+        const msg = String(e?.msg || '未知错误');
+        // 强制更新不允许「取消」（否则可绕过强制窗），只有普通更新提供该按钮。
+        ui.done(false, () => retryUpdate(info, downloadApk), msg,
+          undefined, undefined, info.force ? undefined : cancelUpdate);
+      }
+    });
+    await (XuanNative as any).backgroundDownload({
+      url,
+      fileName: 'xuan-update.apk',
+      expectedSize: info.size || 0,
+      expectedSha256: info.sha256 || '',
+      expectedSign: info.releaseSign || '',
+      versionName: info.versionName || '',
+    });
+    return true;
+  } catch (e) {
+    // backgroundDownload 调用本身失败（旧包无此方法 / 服务启动失败）→ 回退 WebView 通道
+    settled = true;
+    try { handle?.remove?.(); } catch { /* noop */ }
+    console.warn('[Updater] 原生后台下载不可用，回退 WebView 通道:', e);
+    return false;
+  }
+}
+
 /** 下载/校验失败后重新弹出更新窗重试：
  *  强制更新 → 仍是「只有更新按钮」的强制窗，杜绝绕过；
  *  普通更新 → 恢复「取消 + 确定」的普通窗，用户可选择重试或稍后再说。 */
@@ -320,7 +464,10 @@ function retryUpdate(info: UpdateInfo, action: (i: UpdateInfo) => void) {
 async function downloadApk(info: UpdateInfo) {
   const ui = showProgressDialog();
   try {
-    const url = await downloadUrl(info.downloadUrl || '/download/xuan-music.apk');
+    const url = await downloadUrl(info.downloadUrl || '', info.fileName);
+    // Android 优先原生后台通道：切后台 / 锁屏继续下载，通知栏显示进度与安装入口；
+    // 原生不可用时（旧包 / 服务启动失败）回退 WebView 下载。
+    if (await tryNativeBackgroundDownload(info, url, ui)) return;
     lastDownloadReleaseSign = '';
     let bytes: Uint8Array;
     try {
@@ -338,8 +485,9 @@ async function downloadApk(info: UpdateInfo) {
       '签名与完整性校验通过，点击下方按钮安装，安装后即为新版本');
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e || '未知错误');
+    // 强制更新不允许「取消」（否则可绕过强制窗），只有普通更新提供该按钮。
     ui.done(false, () => retryUpdate(info, downloadApk), msg,
-      undefined, undefined);
+      undefined, undefined, info.force ? undefined : cancelUpdate);
   }
 }
 
@@ -347,7 +495,7 @@ async function downloadApk(info: UpdateInfo) {
 async function downloadDesktopExe(info: UpdateInfo) {
   const ui = showProgressDialog('正在下载桌面版更新');
   try {
-    const url = await downloadUrl(info.downloadUrl || '/download/xuan-music-desktop.exe');
+    const url = await downloadUrl(info.downloadUrl || '', info.fileName);
     lastDownloadReleaseSign = '';
     const bytes = await fetchApkBytes(url, ui, info.size);
     ui.set(100, '正在校验安装包完整性…');
@@ -366,7 +514,8 @@ async function downloadDesktopExe(info: UpdateInfo) {
       '完整性校验通过，安装包已保存到下载目录，请运行 Setup 覆盖安装');
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e || '未知错误');
-    ui.done(false, () => retryUpdate(info, downloadDesktopExe), msg);
+    ui.done(false, () => retryUpdate(info, downloadDesktopExe), msg,
+      undefined, undefined, info.force ? undefined : cancelUpdate);
   }
 }
 

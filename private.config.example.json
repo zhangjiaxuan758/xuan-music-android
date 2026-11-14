@@ -1,0 +1,13 @@
+{
+  "_xuanNotice": "小轩音乐为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。",
+  "_xuanServerBase": "__XUAN_SERVER_BASE__",
+  "serverBase": "__XUAN_SERVER_BASE__",
+  "serverHost": "__XUAN_SERVER_HOST__",
+  "githubClientId": "__XUAN_GITHUB_CLIENT_ID__",
+  "githubClientSecret": "__XUAN_GITHUB_CLIENT_SECRET__",
+  "appSignSecret": "__XUAN_APP_SIGN_SECRET__",
+  "certSha256": "__XUAN_CERT_SHA256__",
+  "adminDefaultPassword": "__XUAN_ADMIN_DEFAULT_PASSWORD__",
+  "serverIp": "__XUAN_SERVER_IP__",
+  "githubAccount": "__XUAN_GITHUB_ACCOUNT__"
+}
