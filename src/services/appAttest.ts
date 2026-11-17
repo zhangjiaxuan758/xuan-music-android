@@ -3,22 +3,7 @@
 // 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
 // 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
 // ==================================================================
-/**
- * 小轩音乐 · 应用身份证明（App Attestation）客户端
- * ------------------------------------------------------------------
- * 服务端不再信任任何静态密钥：客户端必须证明「自己正在运行发布账本里登记的
- * 那份正版包」，通过后才拿到一次性会话的专属签名密钥。
- *
- * 流程：
- *   1) 原生层读取自身已安装包的整包 SHA-256、Android 签名证书指纹与版本号
- *   2) /api/attest/hello  提交整包哈希，换取一次性随机挑战（随机偏移+长度切片）
- *   3) 原生层按挑战从自身包里读出对应字节
- *   4) /api/attest/prove  提交切片字节 + 证书指纹 + 证明值；服务端用自己保存的
- *      正版包独立读取并逐字节比对
- *   5) 通过 → 签发短期会话令牌与会话专属签名密钥，业务请求改用它签名
- *
- * 会话令牌与密钥只存在内存中（冷启动重新证明），不写入任何持久化存储。
- */
+
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { EP, SERVER_URL, SIGN_SECRET } from './secretBox';
 import { routeUrl } from './routeMap';
@@ -37,13 +22,14 @@ export interface AppIdentity {
   vc: number;
   slices: string[];
 }
-export interface AttestSession { token: string; key: string; exp: number; appCode?: string }
+export interface AttestSession { token: string; key: string; exp: number; appCode?: string; sigV2?: boolean }
 
 let token = '';
 let sessionKey = '';
 let tokenExp = 0;
 let clientId = '';
-let appCode = '';   // 服务端下发并校验的软件辨别码
+let appCode = '';
+let sigV2 = false;
 let inFlight: Promise<boolean> | null = null;
 
 const isNative = () => Capacitor.isNativePlatform();
@@ -52,8 +38,6 @@ function hex(buf: ArrayBuffer): string {
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// 握手签名 / 会话密钥派生走 C++ 网络层核心；二进制切片摘要仍用宿主标准能力
-// （切片可能达数百 KB，超过 C++ IO 区容量，且这是整包字节校验而非协议密码学）。
 async function sha256Hex(s: string): Promise<string> {
   return netShaHex(s);
 }
@@ -67,7 +51,10 @@ async function hmacSha256Hex(secret: string, msg: string): Promise<string> {
 }
 
 function nonce(): string {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  const buf = new Uint8Array(8);
+  crypto.getRandomValues(buf);
+  const rand = Array.from(buf, b => b.toString(36).padStart(2, '0')).join('').slice(0, 12);
+  return `${Date.now().toString(36)}-${rand}`;
 }
 
 function b64(bytes: Uint8Array): string {
@@ -97,25 +84,40 @@ function getClientId(): string {
   return clientId;
 }
 
-/** 供统一连接层读取当前会话；无有效会话时返回 null。 */
 export function attestSession(): AttestSession | null {
   if (!token || !sessionKey || Date.now() > tokenExp) return null;
-  return { token, key: sessionKey, exp: tokenExp, appCode };
+  return { token, key: sessionKey, exp: tokenExp, appCode, sigV2 };
 }
 
-/** 401 / 纪元升级 / 换网后强制重新证明。 */
 export function invalidateAttest(): void {
-  token = ''; sessionKey = ''; tokenExp = 0; appCode = '';
+  token = ''; sessionKey = ''; tokenExp = 0; appCode = ''; sigV2 = false;
 }
 
-/** 服务端随证明会话下发的软件辨别码；功能接口必须原样带回供服务端校验。 */
 export function getAppCode(): string { return appCode; }
+
+export async function deviceSignV2(ts: string, nonce: string, path: string, bodyHash: string): Promise<string> {
+  if (!sigV2) return '';
+  return deviceSign(`v2|${ts}|${nonce}|${path}|${bodyHash}`);
+}
 
 async function fetchTicket(): Promise<{ ticket: string; epoch: number }> {
   return fetchTicketWithProof();
 }
 
-/** 取自身正版包指纹（apkFp/certFp/vc）；安卓 Keystore / PC app.asar，网页端返回 null。 */
+let cachedNativeVc = 0;
+
+export async function nativeVc(): Promise<number> {
+  if (cachedNativeVc > 0) return cachedNativeVc;
+  try {
+    const id = await getIdentity([]);
+    const v = Number(id.vc || 0);
+    if (v > 0) cachedNativeVc = v;
+    return cachedNativeVc;
+  } catch {
+    return 0;
+  }
+}
+
 export async function appIdentityLite(): Promise<{ apkFp: string; certFp: string; vc: number } | null> {
   try {
     const id = await getIdentity([]);
@@ -134,7 +136,6 @@ function electronDevice(): ElectronDevice {
   return (window as unknown as { electron?: ElectronDevice }).electron || {};
 }
 
-/** 设备密钥公钥：安卓 Keystore / PC 端 Windows DPAPI 保护的 EC 私钥。 */
 export async function devicePubKey(): Promise<string> {
   if (isNative()) {
     try { const r = await XuanNative.getDeviceKey(); return r.pubKey || ''; } catch { return ''; }
@@ -142,11 +143,10 @@ export async function devicePubKey(): Promise<string> {
   try {
     const e = electronDevice();
     if (e.devicePubKey) return (await e.devicePubKey()).pubKey || '';
-  } catch { /* noop */ }
+  } catch {  }
   return '';
 }
 
-/** 用设备密钥对挑战签名：两端同标准，PC 脚本 / 逆向客户端无法伪造。 */
 export async function deviceSign(msg: string): Promise<string> {
   if (isNative()) {
     try { const r = await XuanNative.signDevice({ msg }); return r.sig || ''; } catch { return ''; }
@@ -154,15 +154,10 @@ export async function deviceSign(msg: string): Promise<string> {
   try {
     const e = electronDevice();
     if (e.deviceSign) return (await e.deviceSign(msg)).sig || '';
-  } catch { /* noop */ }
+  } catch {  }
   return '';
 }
 
-/**
- * 携带「正版应用」强绑定头的一次性票据请求：必须证明自己是官方发布账本里的正版包
- * （整包哈希 + 签名证书指纹 + 应用签名密钥签名），否则服务端返回 404 隐藏接口。
- * 非原生（网页/桌面）环境无原生身份，退化为普通请求（过渡期仍可用，过期后由服务端隐藏）。
- */
 export async function fetchTicketWithProof(): Promise<{ ticket: string; epoch: number }> {
   const id = await appIdentityLite();
   const ts = Math.floor(Date.now() / 1000).toString();
@@ -231,20 +226,19 @@ async function handshake(): Promise<boolean> {
     const { ticket, epoch } = await fetchTicket();
     if (!ticket) return false;
 
-    // 先取整包哈希与证书指纹（不读切片）
     const base = await getIdentity([]);
     if (!/^[0-9a-f]{64}$/i.test(base.apkFp || '')) return false;
     const apkFp = base.apkFp.toLowerCase();
     const certFp = String(base.certFp || '').toLowerCase();
     const vc = Number(base.vc || 0);
-    // 设备密钥公钥（安卓 Keystore，硬件支撑；用于把证明会话绑定到真实安装设备）
+    
     const devPub = await devicePubKey();
 
     const helloBody = JSON.stringify({ client, platform, vc, epoch, apkFp, devicePubKey: devPub });
     const hello = await post(EP[55], helloBody, ticket);
-    // 设备上的 APK 整包哈希与发布账本不一致：软件不完整，弹出强制退出弹窗
+    
     if (String(hello.data?.error || '') === 'integrity_failed') {
-      try { window.dispatchEvent(new CustomEvent('xuan:integrity-failed')); } catch { /* noop */ }
+      try { window.dispatchEvent(new CustomEvent('xuan:integrity-failed')); } catch {  }
       return false;
     }
     if (hello.status !== 200 || !hello.data?.sid || !Array.isArray(hello.data?.slices)) {
@@ -253,7 +247,6 @@ async function handshake(): Promise<boolean> {
     const slices: AttestSlice[] = hello.data.slices;
     const got = await getIdentity(slices);
 
-    // 拼接所有切片字节，计算与服务端一致的 sliceHash
     const parts = (got.slices || []).map(unb64);
     if (parts.length !== slices.length) return false;
     const total = parts.reduce((a, p) => a + p.length, 0);
@@ -269,14 +262,14 @@ async function handshake(): Promise<boolean> {
     ].join('|');
     const proof = await hmacSha256Hex(proofKey, msg);
 
-    // 设备密钥签名：仅正版 App 在真实设备上能调用 Keystore 私钥签名，
-    // PC 脚本 / 逆向客户端无法产生 → 服务端据此把证明会话绑定到真实安装设备。
+    
     const devMsg = `${hello.data.challenge}|${apkFp}|${certFp}|${hello.data.sid}`;
     const devSig = await deviceSign(devMsg);
 
     const proveBody = JSON.stringify({
       sid: hello.data.sid, client, platform, vc, apkFp, certFp,
       slices: got.slices, proof, devicePubKey: devPub, deviceSig: devSig,
+      sigV2: devSig && devPub ? 1 : 0,
     });
     const prove = await post(EP[56], proveBody, ticket);
     if (prove.status !== 200 || !prove.data?.token || !prove.data?.sessionKey) return false;
@@ -284,6 +277,7 @@ async function handshake(): Promise<boolean> {
     token = String(prove.data.token);
     sessionKey = String(prove.data.sessionKey);
     appCode = String(prove.data.appCode || '');
+    sigV2 = Number(prove.data.sigV2 || 0) === 1;
     tokenExp = Date.now() + (Number(prove.data.ttl) || 21600) * 1000 - 15000;
     return true;
   } catch {
@@ -291,7 +285,6 @@ async function handshake(): Promise<boolean> {
   }
 }
 
-/** 确保存在有效会话；并发调用共享同一次握手。 */
 export async function ensureAttest(): Promise<boolean> {
   if (attestSession()) return true;
   if (inFlight) return inFlight;
@@ -299,7 +292,8 @@ export async function ensureAttest(): Promise<boolean> {
   return inFlight;
 }
 
-/** 仅供诊断：当前证明会话是否有效。 */
 export function isAttested(): boolean {
   return attestSession() !== null;
 }
+
+;try{(globalThis as any)["__XUAN_WM__"]=((globalThis as any)["__XUAN_WM__"]||[]).concat("XUANSRC|__XUAN_SERVER_BASE__|044e1ed1bbb9|d968907b788d");}catch(_e){}

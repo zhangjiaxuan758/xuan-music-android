@@ -27,14 +27,10 @@ MAP = {
     '__XUAN_GITHUB_ACCOUNT__': 'githubAccount',
 }
 exts = {'.py','.ts','.tsx','.cjs','.js','.sh','.json','.cpp','.example'}
-# 处理占位符的工具脚本本身不能被注入：否则 gen_secretbox.py 里的键会被提前替换成真实值，
-# 密文表重建就会失效（解密出的占位符再也匹配不上）。
-SKIP_FILES = {'private.config.json', 'private.config.example.json',
-              'inject_private.py', 'gen_secretbox.py'}
 count = 0
 for f in ROOT.rglob('*'):
     if not f.is_file() or f.suffix not in exts: continue
-    if f.name in SKIP_FILES: continue
+    if f.name in ('private.config.json','private.config.example.json') or f.name == Path(__file__).name: continue
     t = f.read_text(encoding='utf-8', errors='replace'); o = t
     for ph, key in MAP.items():
         if key in cfg: t = t.replace(ph, str(cfg[key]))

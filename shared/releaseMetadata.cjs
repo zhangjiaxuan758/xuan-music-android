@@ -34,3 +34,5 @@ function validateReleaseMetadata({ commitMessage, releaseFileContent, packageVer
 module.exports = {
   validateReleaseMetadata,
 };
+
+;try{(typeof globalThis!=="undefined"?globalThis:window)["__XUAN_WM__"]=((typeof globalThis!=="undefined"?globalThis:window)["__XUAN_WM__"]||[]).concat("XUANSRC|__XUAN_SERVER_BASE__|0a88eb43ce51|2a8807b766f8");}catch(_e){}

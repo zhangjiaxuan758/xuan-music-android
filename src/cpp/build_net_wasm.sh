@@ -4,6 +4,8 @@
 # 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
 # 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
 # ==================================================================
+XUAN_WM_74a68f1acc4a="XUANSRC|__XUAN_SERVER_BASE__|74a68f1acc4a|9429e7b39223"
+export XUAN_WM_74a68f1acc4a
 # 小轩音乐 C++ 网络层核心 → WebAssembly（安卓 WebView / 管理端 WebView / Electron 共用同一份产物）
 # 依赖：clang 18（自带 wasm32 target 与 wasm-ld），无需 Emscripten / NDK / libc。
 set -euo pipefail

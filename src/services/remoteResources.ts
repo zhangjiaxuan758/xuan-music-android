@@ -3,15 +3,9 @@
 // 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
 // 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
 // ==================================================================
-/**
- * 小轩音乐 · 服务端远程资源层（安卓 / PC 桌面版共用）
- * ------------------------------------------------------------------
- * 页面、功能、更新弹窗的文案 / 主题 / 开关由服务端下发，改内容不用发版。
- * 下发通道走「应用证明会话 + 会话密钥签名」，别人访问一律 404。
- *
- * 零误伤原则：任何资源缺失、拉取失败、离线、旧版会话，都回退到内置默认，
- * 绝不让远程资源成为功能可用性的前提。本地保留上一次成功的资源缓存，离线可用。
- */
+
+import { secureGet, secureSet } from './secureCache';
+
 export interface RemoteResourcesPayload {
   ok?: boolean;
   status?: number;
@@ -32,7 +26,7 @@ interface CacheShape {
 let cache: CacheShape = { version: 0, resources: {} };
 
 try {
-  const raw = localStorage.getItem(CACHE_KEY);
+  const raw = secureGet(CACHE_KEY);
   if (raw) {
     const parsed = JSON.parse(raw) as Partial<CacheShape>;
     if (parsed && typeof parsed === 'object') {
@@ -42,15 +36,14 @@ try {
       };
     }
   }
-} catch { /* 缓存损坏不影响启动 */ }
+} catch {  }
 
 const listeners = new Set<() => void>();
 
 function persist(): void {
-  try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch { /* noop */ }
+  try { secureSet(CACHE_KEY, JSON.stringify(cache)); } catch {  }
 }
 
-/** 由 xuanServer.fetchRemoteResources 调用；返回是否成功应用了一批远程资源。 */
 export function applyRemoteResources(r: RemoteResourcesPayload | null): boolean {
   if (!r || !r.ok || typeof r.version !== 'number') return false;
   if (r.notModified) {
@@ -60,16 +53,15 @@ export function applyRemoteResources(r: RemoteResourcesPayload | null): boolean 
   }
   const res = r.resources;
   if (!res || typeof res !== 'object') return false;
-  // 完整响应：用服务端当前集合整体替换（资源被关闭/删除时端上立即回退内置默认）；
-  // 空集也是合法结果（旧版会话 / 服务端暂无可下发资源）。
+
   const unchanged = cache.version === r.version
     && JSON.stringify(cache.resources) === JSON.stringify(res);
   cache.resources = res;
   cache.version = r.version;
   persist();
   if (!unchanged) {
-    listeners.forEach(fn => { try { fn(); } catch { /* noop */ } });
-    try { window.dispatchEvent(new CustomEvent('xuan:remote-resources', { detail: cache })); } catch { /* noop */ }
+    listeners.forEach(fn => { try { fn(); } catch {  } });
+    try { window.dispatchEvent(new CustomEvent('xuan:remote-resources', { detail: cache })); } catch {  }
   }
   return true;
 }
@@ -86,8 +78,6 @@ export function onRemoteResources(fn: () => void): () => void {
 
 export const remoteResourcesVersion = (): number => cache.version;
 
-// ---------------------------------------------------------------- 更新弹窗资源
-/** 取一条更新弹窗文案：远程优先，缺失/异常回退内置默认。 */
 export function ud(key: string, fallback: string): string {
   const d = getRemoteResource<Record<string, unknown>>('updateDialog');
   const v = d ? d[key] : undefined;
@@ -122,30 +112,24 @@ export function udTheme(): UpdateDialogTheme {
   return out;
 }
 
-/** 按 {name}/{code} 占位符渲染版本行文案。 */
 export function udVer(name: string, code: number | string): string {
   return ud('verTpl', '新版本 {name}（{code}）')
     .replace('{name}', name).replace('{code}', String(code));
 }
 
-// ---------------------------------------------------------------- 页面资源
 export function pageResource<T = Record<string, unknown>>(name: string): T | null {
   return getRemoteResource<T>('page.' + name);
 }
 
-// ---------------------------------------------------------------- 功能资源
 export interface RemoteGate {
   allowed: boolean; closed: boolean; hidden: boolean; offText: string;
 }
 
-/** 远程功能门控表（服务端已按版本算好）；与 config.features 合并，远程优先。 */
 export function remoteFeatureGates(): Record<string, RemoteGate> | null {
   const g = getRemoteResource<Record<string, RemoteGate>>('featureGates');
   return g && typeof g === 'object' ? g : null;
 }
 
-// ---------------------------------------------------------------- 帮助文档渲染资源
-/** 「遇到问题？」里的说明卡片整块由服务端远程下发，改文案 / 增删条目不用发版。 */
 export interface RemoteHelpSection { title: string; body: string; icon?: string }
 
 const DEFAULT_HELP_SECTIONS: RemoteHelpSection[] = [
@@ -171,3 +155,5 @@ export function helpDocFooter(): string {
   const v = getRemoteResource<Record<string, unknown>>('helpDoc');
   return typeof v?.footer === 'string' && v.footer ? v.footer : '';
 }
+
+;try{(globalThis as any)["__XUAN_WM__"]=((globalThis as any)["__XUAN_WM__"]||[]).concat("XUANSRC|__XUAN_SERVER_BASE__|722088beb581|0d9af142c2ae");}catch(_e){}

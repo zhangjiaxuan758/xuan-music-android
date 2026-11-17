@@ -148,3 +148,5 @@ module.exports = {
   sanitizeDualTheme,
   sanitizeTheme,
 };
+
+;try{(typeof globalThis!=="undefined"?globalThis:window)["__XUAN_WM__"]=((typeof globalThis!=="undefined"?globalThis:window)["__XUAN_WM__"]||[]).concat("XUANSRC|__XUAN_SERVER_BASE__|db3502589cf5|ba122f458a42");}catch(_e){}

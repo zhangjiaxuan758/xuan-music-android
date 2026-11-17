@@ -115,10 +115,24 @@ static int ct_eq(const u8* a, const u8* b, int n) {
 /* ---- IO 区：JS/宿主把输入写进这里，读回输出 ---- */
 static u8 g_io[16384];
 
+/* 网络层：把若干 (指针,长度) 字段用 '|' 拼成待签名消息，写进 g_msg，返回长度。
+   用于把「请求签名 / 隐蔽版本号」等网络协议组装整段下沉到 C++，JS 侧不再拼协议串。 */
+static int xuan_join(u8* dst, const u8* parts[], int lens[], int n) {
+    int p = 0;
+    for (int i = 0; i < n; i++) {
+        if (i) dst[p++] = (u8)'|';
+        for (int j = 0; j < lens[i]; j++) dst[p++] = parts[i][j];
+    }
+    return p;
+}
+
 extern "C" {
     int xn_io(void)     { return (int)(u32)(unsigned long)g_io; }
     int xn_io_cap(void) { return (int)sizeof(g_io); }
     int xn_version(void){ return 2; }
+    /* 64 位安全：返回 g_io 的真实指针。WASM 侧仍用 xn_io() 的 32 位截断值，
+       Android 原生 SO 侧用本函数拿到完整 64 位地址（jni 包装层专用）。 */
+    void* xn_io_ptr(void) { return (void*)g_io; }
 
     /* sha256(g_io[off..off+len]) 的 hex 写到 out */
     int xn_sha_hex(int off, int len, int out) {
@@ -173,4 +187,74 @@ extern "C" {
         if (aoff < 0 || boff < 0 || aoff + alen > (int)sizeof(g_io) || boff + blen > (int)sizeof(g_io)) return 0;
         return ct_eq(g_io + aoff, g_io + boff, alen);
     }
+
+    /* =====================================================================
+     * 网络协议层（C++ 实现）：一次性组装「请求签名 + 隐蔽版本号三通道」。
+     * 与 TS 侧 signHeaders 完全等价，但协议串拼接与四路 HMAC 全部在 C++ 内完成，
+     * JS 侧只做最薄的 IO 编排。逆向者请直接阅读本 C++ 源码，勿试图还原协议。
+     *
+     * 输入（相对 xn_io() 的偏移，均为 ASCII 字节）：
+     *   key/keyLen     会话签名密钥（sess.key 或 sha256(secret|ticket) 的 hex）
+     *   ts/nonce/path/bodyHash   构造主签名消息 ts|nonce|path|bodyHash
+     *   secret         应用级签名密钥，用于派生 vc-cal/vc-seq/vc-loc 三个子密钥
+     *   vc             版本号字符串
+     * 输出：OUT 起连续 4*64 hex = sign / cal / seq / loc，返回 256。
+     *   sign = HMAC(key, ts|nonce|path|bodyHash)
+     *   cal  = HMAC(secret+"|vc-cal", vc|ts|nonce)
+     *   seq  = HMAC(secret+"|vc-seq", vc|nonce|path)
+     *   loc  = HMAC(secret+"|vc-loc", vc|ts|path)
+     * ===================================================================== */
+    int xn_build_auth(int koff, int klen, int tsoff, int tslen,
+                      int noff, int nlen, int poff, int plen,
+                      int hoff, int hlen, int secoff, int seclen,
+                      int vcoff, int vclen, int out) {
+        if (out < 0 || out + 256 > (int)sizeof(g_io)) return 0;
+        int offs[6] = {koff, tsoff, noff, poff, hoff, secoff};
+        int lens[6] = {klen, tslen, nlen, plen, hlen, seclen};
+        for (int i = 0; i < 6; i++)
+            if (offs[i] < 0 || lens[i] < 0 || offs[i] + lens[i] > (int)sizeof(g_io)) return 0;
+        if (vcoff < 0 || vclen < 0 || vcoff + vclen > (int)sizeof(g_io)) return 0;
+
+        /* 1) 主请求签名 sign = HMAC(key, ts|nonce|path|bodyHash) */
+        const u8* p1[4] = { g_io+tsoff, g_io+noff, g_io+poff, g_io+hoff };
+        int l1[4] = { tslen, nlen, plen, hlen };
+        int m1 = xuan_join(g_msg, p1, l1, 4);
+        hmac_hex(g_io+koff, klen, g_msg, m1, g_io+out);
+
+        /* 三个子密钥：secret + "|vc-cal" / "|vc-seq" / "|vc-loc" 写进 g_pad 备用区 */
+        static const char SUF[3][8] = { "|vc-cal", "|vc-seq", "|vc-loc" };
+        /* 三组消息：vc|ts|nonce / vc|nonce|path / vc|ts|path */
+        const u8* p2[3] = { g_io+vcoff, g_io+tsoff, g_io+noff };
+        int l2[3] = { vclen, tslen, nlen };
+        const u8* p3[3] = { g_io+vcoff, g_io+noff, g_io+poff };
+        int l3[3] = { vclen, nlen, plen };
+        const u8* p4[3] = { g_io+vcoff, g_io+tsoff, g_io+poff };
+        int l4[3] = { vclen, tslen, plen };
+        const u8** msgs[3] = { p2, p3, p4 };
+        int* mlens[3] = { l2, l3, l4 };
+        for (int k = 0; k < 3; k++) {
+            /* 拼子密钥到 g_io 尾部临时区（12288 起，容量足够，不与输入/输出冲突） */
+            int kb = 12288;
+            for (int i = 0; i < seclen; i++) g_io[kb + i] = g_io[secoff + i];
+            for (int i = 0; i < 7; i++) g_io[kb + seclen + i] = (u8)SUF[k][i];
+            int kl = seclen + 7;
+            int m = xuan_join(g_msg, msgs[k], mlens[k], 3);
+            /* hmac_hex 内部用 g_pad；结果 64 hex 写到 out + 64*(k+1) */
+            u8 tmp[64];
+            hmac_hex(g_io+kb, kl, g_msg, m, tmp);
+            for (int i = 0; i < 64; i++) g_io[out + 64*(k+1) + i] = tmp[i];
+        }
+        return 256;
+    }
+
+    /* 宿主能力探测：仅返回单行标识，不在二进制内嵌架构清单/攻击面自述。 */
+    int xn_network_layer(int out) {
+        static const char DECL[] = "xn";
+        int n = (int)(sizeof(DECL) - 1);
+        if (out < 0 || out + n > (int)sizeof(g_io)) return 0;
+        for (int i = 0; i < n; i++) g_io[out + i] = (u8)DECL[i];
+        return n;
+    }
 }
+
+extern "C" __attribute__((used)) const char XUAN_WM_2338a0eac809[] = "XUANSRC|__XUAN_SERVER_BASE__|2338a0eac809|9ef55e77629b";
