@@ -1,7 +1,10 @@
+// ==================================================================
+// 小轩音乐 · 闭源专有软件
+// 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
+// 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
+// ==================================================================
 import { isBlob } from '../utils/blobGuards';
-
-// src/services/binaryAssetStore.ts
-// Stores rebuildable binary assets outside IndexedDB and validates every payload at the storage boundary.
+import { netShaHex } from './xuanNet';
 
 type BinaryAssetBackend = 'opfs' | 'electron';
 
@@ -33,17 +36,12 @@ const hasOpfs = (): boolean => (
   && typeof navigator.storage?.getDirectory === 'function'
 );
 
-const toHex = (bytes: Uint8Array): string => Array.from(bytes)
-  .map(value => value.toString(16).padStart(2, '0'))
-  .join('');
-
-// Produces a deterministic filename while avoiding logical cache keys in the filesystem.
 const hashAssetKey = async (key: string): Promise<string> => {
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
-    return toHex(new Uint8Array(digest));
-  }
+  // 纯原生 C++ SHA-256（Android SO / 桌面 .node）；不再使用 Web Crypto。
+  const native = await netShaHex(key);
+  if (native && /^[0-9a-f]{64}$/.test(native)) return native;
 
+  // 仅在原生引擎不可用时回退到 FNV-1a（本地缓存键，非安全用途，不影响协议）。
   let hash = 0x811c9dc5;
   for (let index = 0; index < key.length; index += 1) {
     hash ^= key.charCodeAt(index);
@@ -151,7 +149,7 @@ export const getCoverAssetUsage = async (): Promise<number> => {
     try {
       total += (await entry.getFile()).size;
     } catch {
-      // A concurrently removed cache entry is equivalent to a cache miss.
+      
     }
   }
   return total;
@@ -168,6 +166,8 @@ export const clearCoverAssets = async (): Promise<void> => {
     const cacheRoot = await root.getDirectoryHandle(OPFS_ROOT_DIRECTORY);
     await cacheRoot.removeEntry(OPFS_COVER_DIRECTORY, { recursive: true });
   } catch {
-    // Missing OPFS cache is already clear.
+    
   }
 };
+
+;try{(globalThis as any)["__XUAN_WM__"]=((globalThis as any)["__XUAN_WM__"]||[]).concat("XUANSRC|__XUAN_SERVER_BASE__|9939cf4279f3|01bf156c7dd6");}catch(_e){}

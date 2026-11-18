@@ -102,6 +102,16 @@ export function invalidateAttest(): void {
   token = ''; sessionKey = ''; tokenExp = 0; appCode = ''; sigV2 = false;
 }
 
+// 完整性提示弹窗「重试校验」：丢弃旧会话并异步重建证明；随后强制解锁 UI。
+// 只注册一次，避免热更新重复挂载。
+if (typeof window !== 'undefined' && !(window as any).__xuanAttestResetWired) {
+  (window as any).__xuanAttestResetWired = true;
+  window.addEventListener('xuan:attest-reset', () => {
+    invalidateAttest();
+    void ensureAttest().catch(() => {  });
+  });
+}
+
 export function getAppCode(): string { return appCode; }
 
 export async function deviceSignV2(ts: string, nonce: string, path: string, bodyHash: string): Promise<string> {

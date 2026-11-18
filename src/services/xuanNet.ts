@@ -24,11 +24,23 @@ interface XuanNetNative {
     netCrypto: (o: { op: string; args: string[] }) => Promise<{ ok: boolean; value: string; error?: string }>;
 }
 
+/** 桌面 Electron 渲染层桥（preload 暴露，走主进程原生 .node）。 */
+interface XuanElectronNet {
+    netCryptoAvailable?: () => Promise<{ ok: boolean }>;
+    netCrypto?: (op: string, args: string[]) => Promise<{ ok: boolean; value: string; error?: string }>;
+}
+function electronNet(): XuanElectronNet | null {
+    const e = (window as unknown as { electron?: XuanElectronNet }).electron;
+    return e && typeof e.netCrypto === 'function' ? e : null;
+}
+
 let nativePlugin: XuanNetNative | null = null;
 let nativeReady: boolean | null = null;
 
 async function hasNativeSo(): Promise<boolean> {
     if (nativeReady !== null) return nativeReady;
+    // 桌面 Electron：渲染层 -> 主进程原生 .node（C++）。
+    if (electronNet()) { nativeReady = true; return true; }
     if (!Capacitor.isNativePlatform()) { nativeReady = false; return false; }
     try {
         if (!nativePlugin) nativePlugin = registerPlugin<XuanNetNative>('XuanNative');
@@ -42,7 +54,14 @@ async function hasNativeSo(): Promise<boolean> {
 
 async function soCall(op: string, args: string[]): Promise<string | null> {
     try {
-        if (!(await hasNativeSo()) || !nativePlugin) return null;
+        if (!(await hasNativeSo())) return null;
+        const en = electronNet();
+        if (en?.netCrypto) {
+            const r = await en.netCrypto(op, args);
+            if (!r || !r.ok) return null;
+            return String(r.value ?? '');
+        }
+        if (!nativePlugin) return null;
         const r = await nativePlugin.netCrypto({ op, args });
         if (!r || !r.ok) return null;
         return String(r.value ?? '');
@@ -107,6 +126,38 @@ export async function netBuildAuth(a: {
         return { sign: h(0), cal: h(1), seq: h(2), loc: h(3) };
     }
     return null;
+}
+
+/** AES-256-GCM 加密（纯原生 SO）：key/iv/plain 均为 hex，返回 base64(iv||ct||tag)。
+ *  与服务端 cryptography.AESGCM 字节兼容。SO 不可用返回 null（fail-closed）。 */
+export async function netAesGcmEnc(keyHex: string, ivHex: string, plainHex: string): Promise<string | null> {
+    return await soCall('aes', [keyHex, ivHex, plainHex]);
+}
+
+/** 密码学安全随机数（纯原生 SO）：返回 n 字节的 hex（2n 字符）。
+ *  替代 crypto.getRandomValues，SO 不可用时返回 null（fail-closed）。 */
+export async function netRandomHex(n: number): Promise<string | null> {
+    return await soCall('rng', [String(n)]);
+}
+
+/** 大字节流的 SHA-256（原生增量哈希，分块喂入，避免整包 hex 翻倍内存）。
+ *  替代 appUpdater 的 crypto.subtle.digest；SO 不可用返回 null（fail-closed）。 */
+export async function netSha256Bytes(bytes: Uint8Array): Promise<string | null> {
+    try {
+        if (!(await hasNativeSo())) return null;
+        await soCall('shainit', []);
+        const CHUNK = 16384; // 16KB 原始 -> 32KB hex，匹配 JNI/Node 参数槽上限
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+            const chunk = bytes.subarray(i, Math.min(i + CHUNK, bytes.length));
+            let hex = '';
+            for (let j = 0; j < chunk.length; j++) hex += chunk[j].toString(16).padStart(2, '0');
+            const r = await soCall('shaupd', [hex]);
+            if (r === null) return null;
+        }
+        return await soCall('shafin', []);
+    } catch {
+        return null;
+    }
 }
 
 /** 宿主网络层标识（纯原生 SO）。 */

@@ -7,6 +7,7 @@
 
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { checkUpdate, downloadUrl, initXuanServer, type UpdateInfo } from './xuanServer';
+import { netSha256Bytes } from './xuanNet';
 import { ud, udVer, udTheme } from './remoteResources';
 import { markOverlay, setDownloadActive, setForceGuardRelease } from './uiUnlockGuard';
 
@@ -429,9 +430,10 @@ async function nativeFallbackBytes(url: string, ui: ProgressUI): Promise<Uint8Ar
 }
 
 async function sha256HexOfBytes(bytes: Uint8Array): Promise<string> {
-  const view = new Uint8Array(bytes.buffer as ArrayBuffer, bytes.byteOffset, bytes.byteLength);
-  const buf = await crypto.subtle.digest('SHA-256', view);
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  // 纯原生 C++ 增量 SHA-256（分块喂入，避免整包 hex 翻倍）；无 Web Crypto。
+  const v = await netSha256Bytes(bytes);
+  if (v && /^[0-9a-f]{64}$/i.test(v)) return v;
+  throw new Error('原生哈希引擎不可用，拒绝安装');
 }
 
 async function verifyDownload(bytes: Uint8Array, info: UpdateInfo, kind: 'apk' | 'exe'): Promise<void> {

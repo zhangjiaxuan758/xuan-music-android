@@ -5,9 +5,11 @@
 
 > **本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。**
 
-## 本轮更新（1.7.50）
-- **网络签名层彻底纯原生 C++**：移除 WASM 兜底与 Web Crypto（crypto.subtle）兜底，SHA-256/HMAC/引导验签/路由键派生/四通道请求签名（sign/cal/seq/loc）全部且仅由原生 C++ 实现（Android libxuan_net.so / Windows xuan_native.node）；SO/.node 不可用时 fail-closed（抛 sign engine unavailable），JS 侧无任何明文签名公式。
-- **原生 IO 缓冲扩容**：C++ g_io 16KB→256KB、参数槽 32KB，长 body（网易云 Cookie/身份快照数十 KB）的哈希也走原生；新增 shab 操作支持 APK 切片等二进制内容的字节哈希，替代原 crypto.subtle.digest。
+## 本轮更新（1.7.51）
+- **全 C++ 加密层，Web Crypto 清零**：签名/验签/路由键/四通道请求签名，以及 Cookie 代理加密（原生 AES-256-GCM，与服务端字节兼容）、下载整包校验（原生增量 SHA-256）、缓存键哈希（原生 SHA-256）、随机数（原生 CSPRNG）全部由原生 C++（Android libxuan_net.so / Windows xuan_native.node，含新增 xuan_aes.cpp）实现；业务代码 crypto.subtle 计数为 0，SO/.node 不可用时 fail-closed。
+- **登录稳定性修复**：完整性失败弹窗改为可关闭+重试（去掉 history/keydown 绝对锁死）、加登录宽限期避免握手抖动误报黑屏；uiUnlockGuard 增加心跳自愈清除残留遮罩；状态栏交还 native 全屏管理，修复 GitHub 登录顶部黑条与"登录后划不动/点不动"。
+- **身份授权码服务端同步**：复制时强制将已登录账号 + 全部本地配置加密上传服务端；输入授权码+密码跨设备/重装恢复账号与全部配置；修复"授权码不存在"（不再允许跳过保存、不再拒绝输入本机自己的码）。
+- **原生 IO 缓冲扩容**：C++ g_io 16KB→256KB、参数槽 32KB；新增 aes/rng/shainit/shaupd/shafin 原生 op。
 - **动态路径回退保留**：boot 表失效时走规范路径本地回退，保证业务可用（避免 1.7.48 全挂）。
 - **C++ GLES2 控件级渲染引擎**（`src/cpp/xuan_ui.*`）：卡片/按钮/文本/开关/分隔线/图标染色，
   布局与圆角合成全部在 so 内完成，零第三方渲染依赖（仅链系统 GLES2/EGL/android/m）。
