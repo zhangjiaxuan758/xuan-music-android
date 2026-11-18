@@ -105,6 +105,10 @@ export async function routeUrl(path: string): Promise<string> {
     const query = q >= 0 ? path.slice(q) : '';
     let dyn = '';
     if (table) dyn = table.routes[await routeKey(p)] || '';
+    // 动态路径为主：boot 表命中即用随机路径；boot 表暂不可用（网络抖动/会话失效）
+    // 时回退规范路径 p，保证业务可用。2026-11-18 修复：哨兵方案在真机 so/wasm
+    // 兜底失效导致 boot 表加载失败时，会让所有业务接口 404（只有固定路径的检查更新
+    // 能用），故恢复本地回退作为可用性保险。
     return BASE_URL + (dyn || p) + query;
 }
 
