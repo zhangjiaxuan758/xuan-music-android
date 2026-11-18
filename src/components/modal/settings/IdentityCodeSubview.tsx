@@ -3,12 +3,12 @@
 // 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
 // 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
 // ==================================================================
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Fingerprint, Copy, Check } from 'lucide-react';
 import FloatingLabelInput from './FloatingLabelInput';
 import PasswordGateDialog from './PasswordGateDialog';
 import {
-    readIdentityCode, identityExists, identityRedeem, applyIdentitySnapshot, identitySave,
+    readIdentityCode, fetchOrCreateIdentity, identityExists, identityRedeem, applyIdentitySnapshot, identitySave,
 } from '../../../services/identityCode';
 import { isCppUIAvailable, openCppIdentityPage } from '../../../services/nativeCppUI';
 import { useGitHubAccountStore } from '../../../stores/useGitHubAccountStore';
@@ -25,8 +25,8 @@ const IdentityCodeSubview: React.FC = () => {
     const [pwOpen, setPwOpen] = useState(false);
     const [pwError, setPwError] = useState('');
     const [redeemed, setRedeemed] = useState(false);
-    // 身份授权码（固定、不可重新生成）
-    const [localCode] = useState(() => readIdentityCode());
+    // 身份授权码：服务端权威下发（同设备幂等），先读本地缓存即时展示，再异步向服务端领取/校准。
+    const [localCode, setLocalCode] = useState(() => readIdentityCode());
     const [copied, setCopied] = useState(false);
     const [setupOpen, setSetupOpen] = useState(false);
     const [setupBusy, setSetupBusy] = useState(false);
@@ -35,6 +35,14 @@ const IdentityCodeSubview: React.FC = () => {
     const updateNetease = useOnlineProviderAccountStore(state => state.updateAccount);
     const githubAccount = useGitHubAccountStore(state => state.account);
     const neteaseAccount = useOnlineProviderAccountStore(state => state.accounts.netease?.user);
+
+    // 进入设置页即向服务端领取本机授权码：码由服务端生成并在服务端本就存在，
+    // 同设备重复领取稳定返回同一个码；缓存命中则即时展示、服务端返回后再校准。
+    useEffect(() => {
+        let alive = true;
+        void fetchOrCreateIdentity().then(code => { if (alive && code) setLocalCode(code); });
+        return () => { alive = false; };
+    }, []);
 
     const borderColor = phase === 'ok' ? 'rgba(34,197,94,.95)'
         : phase === 'fail' ? 'rgba(239,68,68,.95)'
@@ -108,10 +116,16 @@ const IdentityCodeSubview: React.FC = () => {
     };
 
     const handleCopy = () => {
-        // 身份授权码必须在服务端有记录才能跨设备/重装恢复。
-        // 即使本机曾设过密码，也重新上报一次「账号 + 最新配置」快照，确保服务端是最新状态。
+        // 授权码由服务端下发、服务端本就有记录，复制不再承担「上传码」职责。
+        // 若想把「账号 + 配置」加密同步进服务端以便跨设备恢复，可选设置一次密码；
+        // 已设置过则直接复制，不设也可复制本机码（服务端仍可 redeem 空账号快照）。
+        if (pwSet()) { void performCopy(); return; }
         setSetupError('');
         setSetupOpen(true);
+    };
+
+    const pwSet = () => {
+        try { return localStorage.getItem(PW_SET_FLAG) === '1'; } catch { return false; }
     };
 
     const onSetupConfirm = async (password: string) => {
@@ -136,8 +150,10 @@ const IdentityCodeSubview: React.FC = () => {
     };
 
     const onSetupSkip = () => {
-        // 不允许跳过：没有密码就无法加密，服务端不会有记录，重装后必然"授权码不存在"。
-        setSetupError('请设置密码，否则授权码无法在其它设备/重装后恢复');
+        // 可选：不设密码仅同步不到账号信息，但授权码本身已在服务端、可直接复制。
+        setSetupOpen(false);
+        setSetupError('');
+        void performCopy();
     };
 
     const feedback = phase === 'ok' ? { text: '校验成功，正在恢复账号与配置…', color: 'rgba(34,197,94,.95)' }

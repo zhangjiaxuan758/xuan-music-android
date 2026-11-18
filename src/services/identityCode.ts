@@ -8,14 +8,16 @@ import { readProviderSessionValue, writeProviderSessionValue } from './onlineMus
 import { readGithubSession, writeGithubSession } from './githubSession';
 
 const ID_KEY = 'xuan_identity_code';
-const ID_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*._~-';
 
 /**
- * 身份授权码：服务端同步的身份凭据（跨设备/重装可用）。
- * 2026-11-18 修正：
- *  - 文案统一为「身份授权码」，它并不只限本机；
- *  - 复制时强制把「已登录账号 + 全部本地配置」加密存到服务端（不允许跳过导致"授权码不存在"）；
- *  - 恢复时下载同一份快照，写回账号与全部配置并自愈重载。
+ * 身份授权码：服务端权威下发并同步的身份凭据（跨设备/重装可用）。
+ * 2026-11-18 架构改造：
+ *  - 授权码由服务端用密码学安全随机源生成并下发（服务端本来就有记录），
+ *    不再由客户端本地生成、更不依赖「复制」动作才上传；
+ *  - 同一正版设备（证明会话 clientId 绑定）重复领取返回同一个码，本机码稳定；
+ *  - 设置密码时把「已登录账号 + 全部本地配置」加密同步到服务端，供跨设备/重装恢复；
+ *  - 输入本机自己的码也照常 exists -> redeem -> 全量下发账号与配置 -> 整体重载；
+ *  - 码含账号信息，服务端 AES-256-GCM + PBKDF2 加密，接口全部要求证明会话签名 + 动态路由。
  */
 
 /** 设备专属/一次性键：不纳入跨设备同步，避免把旧设备的临时态带到新设备。 */
@@ -33,28 +35,39 @@ const CONFIG_EXCLUDE = new Set<string>([
     'xuan_cached_media_songs',     // 本地缓存歌曲元数据（设备相关）
 ]);
 
-export function generateIdentityCode(): string {
-    const bytes = new Uint8Array(32);
-    crypto.getRandomValues(bytes);
-    let out = '';
-    for (let i = 0; i < 32; i++) out += ID_ALPHABET[bytes[i] % ID_ALPHABET.length];
-    return out;
+const ID_RE = /^[A-Za-z0-9!@#$%^&*._~-]{32}$/;
+
+/**
+ * 从服务端领取（或幂等复用）本机身份授权码。
+ * 服务端按证明会话 clientId 绑定：同一正版设备始终拿到同一个码，
+ * 下发即在服务端建立记录，因此「本机授权码」在服务端本来就存在。
+ * 领到后写入本地缓存，供同步读取使用。失败时回退本地缓存，保证离线也能展示上次的码。
+ */
+export async function fetchOrCreateIdentity(): Promise<string> {
+    try {
+        const r = await signedRequest<{ identity?: string }>('POST', '/api/identity/issue', {});
+        const code = r?.identity || '';
+        if (ID_RE.test(code)) {
+            try { localStorage.setItem(ID_KEY, code); } catch {  }
+            return code;
+        }
+    } catch {  }
+    // 网络异常/会话未就绪：回退本地缓存（可能为旧值），UI 可后续重试。
+    return readIdentityCode();
 }
 
+/** 同步读取已缓存的本机授权码；没有缓存时返回空串（由 fetchOrCreateIdentity 负责异步领取）。 */
 export function readIdentityCode(): string {
     try {
         const v = localStorage.getItem(ID_KEY) || '';
-        if (/^[A-Za-z0-9!@#$%^&*._~-]{32}$/.test(v)) return v;
+        if (ID_RE.test(v)) return v;
     } catch {  }
-    const fresh = generateIdentityCode();
-    try { localStorage.setItem(ID_KEY, fresh); } catch {  }
-    return fresh;
+    return '';
 }
 
-export function rotateIdentityCode(): string {
-    const fresh = generateIdentityCode();
-    try { localStorage.setItem(ID_KEY, fresh); } catch {  }
-    return fresh;
+/** 是否已有可用的服务端授权码缓存。 */
+export function hasIdentityCode(): boolean {
+    return ID_RE.test(readIdentityCode());
 }
 
 export async function identityExists(identity: string): Promise<boolean> {
