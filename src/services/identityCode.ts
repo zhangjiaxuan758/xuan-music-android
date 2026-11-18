@@ -84,18 +84,36 @@ export interface IdentityAccountSnapshot {
     config?: Record<string, string>;
 }
 
-/** 收集本机全部需要同步的配置（localStorage 中的 xuan_* 键）。 */
+/**
+ * bodyHash 现已由原生增量哈希（netSha256Bytes，16KB 分块）覆盖完整字节，
+ * 不再受 JNI 单参数槽 32760 字节上限影响 —— 完整配置可正常同步。
+ * 这里仅保留一个宽松的兜底上限，避免极端超大 body 造成传输/内存问题。
+ */
+const CONFIG_SNAPSHOT_MAX_BYTES = 500000;
+
+/** 按 UTF-8 字节数计量（与 JNI GetStringUTFChars / 服务端 sha256(body_bytes) 一致口径）。 */
+function utf8Bytes(s: string): number {
+    try { return new TextEncoder().encode(s).length; } catch { return s.length; }
+}
+
+/**
+ * 收集本机全部需要同步的配置（localStorage 中的 xuan_* 键），
+ * 并严格限制总 UTF-8 字节数，避免 body 超限触发签名引擎截断导致保存失败。
+ */
 export function collectConfigSnapshot(): Record<string, string> {
     const out: Record<string, string> = {};
+    let total = 0;
     try {
         for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
             if (!key || !key.startsWith('xuan_') || CONFIG_EXCLUDE.has(key)) continue;
             const val = localStorage.getItem(key);
             if (val == null) continue;
-            // 跳过超大值（如主题注册表可能很大），避免 body 过大导致签名/传输失败。
-            if (val.length > 200000) continue;
+            const bytes = utf8Bytes(val) + utf8Bytes(key) + 8; // 8 = JSON 键值分隔符等开销
+            // 单项或累计超限则跳过；宁可少同步几项，也不能让 body 超限导致整体保存失败。
+            if (total + bytes > CONFIG_SNAPSHOT_MAX_BYTES) continue;
             out[key] = val;
+            total += bytes;
         }
     } catch {  }
     return out;
@@ -119,8 +137,10 @@ export async function identitySave(
 }
 
 export async function identityRedeem(identity: string, password: string): Promise<IdentityAccountSnapshot | null> {
-    const r = await signedRequest<IdentityAccountSnapshot>('POST', '/api/identity/redeem', { identity, password });
-    if (!r || typeof r !== 'object') return null;
+    const r = await signedRequest<IdentityAccountSnapshot & { ok?: boolean }>('POST', '/api/identity/redeem', { identity, password });
+    // signedRequest 把非 2xx（如密码错误的 403）也包装成对象返回并带 ok:false；
+    // 必须显式检查 ok，否则错误对象会被当成「成功快照」下发，导致任意密码都提示校验成功却什么都没恢复。
+    if (!r || typeof r !== 'object' || r.ok === false) return null;
     return r;
 }
 

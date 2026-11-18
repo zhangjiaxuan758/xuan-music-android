@@ -11,7 +11,7 @@ import { ensureAttest, attestSession, invalidateAttest, fetchTicketWithProof, ge
 import { applyRemoteResources } from './remoteResources';
 import { readGithubSession } from './githubSession';
 import { routeUrl, refreshRoutes } from './routeMap';
-import { netShaHex, netBuildAuth, netNetworkLayerDecl } from './xuanNet';
+import { netShaHex, netSha256Bytes, netBuildAuth, netNetworkLayerDecl } from './xuanNet';
 import { secureGet, secureSet } from './secureCache';
 import { sealCookie } from './cookieCrypto';
 import type { RemoteResourcesPayload } from './remoteResources';
@@ -82,7 +82,15 @@ export interface UpdateInfo {
 
 async function sha256Hex(data: string): Promise<string> {
   // 纯原生 SHA-256：SO/.node 不可用时 fail-closed，绝不退回 Web Crypto/JS 公式。
-  const v = await netShaHex(data);
+  // 大 body（如身份码同步的完整配置快照）超过 JNI 单参数槽 ~32KB 时，
+  // netShaHex 的 put_arg 会截断导致 hash 与实际发送的 body 不一致 -> 验签 401
+  // （表现为「保存失败」）。超过阈值改走原生增量哈希 netSha256Bytes（16KB 分块），
+  // 保证 bodyHash 覆盖完整字节，与服务端 sha256(body_bytes) 严格一致。
+  let bytes: Uint8Array;
+  try { bytes = new TextEncoder().encode(data); } catch { bytes = new Uint8Array(0); }
+  const v = bytes.length > 12000
+    ? await netSha256Bytes(bytes)   // 增量哈希，规避参数槽截断
+    : await netShaHex(data);
   if (v === null) throw new Error('sign engine unavailable');
   return v;
 }
