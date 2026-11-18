@@ -20,12 +20,18 @@ export const XUAN_SERVER = SERVER_URL;
 
 const APP_SIGN_SECRET = SIGN_SECRET;
 
+// 测试端编译开关：beta 端走 beta 更新检查通道（读服务端 betaUpdate 槽），
+// 正式版走原 update 通道。两段式发布：上传先进 beta，点发布才进正式 update。
+export const IS_BETA = (typeof __XUAN_BETA__ !== 'undefined' && __XUAN_BETA__);
+
 // 需要证明会话签名的接口（服务端 require_attest=True，静态签名一律 401 拒绝）。
 // identity 四接口必须与服务端一致，否则 issue/exists/save/redeem 全部走静态签名被拒，
 // 导致授权码下发/校验永远失败（服务端 vault 无记录 -> 输入本机码报“不存在”）。
 const ATTEST_PATHS = new Set<string>([
   EP[43], EP[44], EP[57], EP[58],
   '/api/identity/issue', '/api/identity/exists', '/api/identity/save', '/api/identity/redeem',
+  // 测试端发布按钮：服务端 require_attest=True，静态签名一律 401。
+  '/api/beta/publish',
 ]);
 
 export interface XuanTab { id: string; label: string; visible: boolean; order: number }
@@ -272,7 +278,9 @@ async function openSSE() {
           if (ev === 'config' && payload.config) applyConfig(payload.config);
           else if (ev === 'config' && payload.version) fetchServerConfig();
 
-          else if (ev === 'update') void checkUpdate(true);
+          // 两段式：测试端监听 'update-beta'（上传即弹），正式端监听 'update'（点发布后才弹）。
+          else if (ev === 'update' && !IS_BETA) void checkUpdate(true);
+          else if (ev === 'update-beta' && IS_BETA) void checkUpdate(true);
           else if (ev === 'resources') void fetchRemoteResources();
           else if (ev === 'hello' && payload.version && (!cfg || payload.version !== cfg.version)) fetchServerConfig();
         } catch {  }
@@ -351,7 +359,9 @@ export async function eapiRequest(apiPath: string, data: Record<string, unknown>
 }
 
 export async function checkUpdate(notify = true, platform: 'android' | 'windows' = 'android'): Promise<UpdateInfo | null> {
-  const path = platform === 'windows' ? EP[45] : EP[46];
+  // 测试端只读 betaUpdate 槽（规范路径经 beta boot 表换成 30 位动态路径）；
+  // 正式版读原 update 通道。路径由 routeUrl 按当前 role 的 boot 表解析。
+  const path = IS_BETA ? '/api/beta/update/check' : (platform === 'windows' ? EP[45] : EP[46]);
   const r = await signedRequest<UpdateInfo & { ok: boolean }>('GET', path);
   if (!r || !r.ok) return null;
   const info: UpdateInfo = {
@@ -419,6 +429,22 @@ export async function fetchHelpLink(): Promise<string | null> {
 export async function redeemAdminCode(code: string): Promise<{ url: string; ttl: number } | null> {
   const r = await signedRequest<{ url: string; ttl: number }>('POST', '/api/redeem', { code });
   return r && typeof (r as any).url === 'string' ? { url: (r as any).url, ttl: Number((r as any).ttl) || 300 } : null;
+}
+
+/**
+ * 校验 6 位授权码换取「小轩音乐测试端」APK 下载链接。
+ * 与管理端 redeemAdminCode 完全对称，只是走独立的 /api/redeem-beta 动态路径，
+ * 服务端签发 /b/ 闸门链接（每 10 秒变、5 分钟有效）。口令同为 __XUAN_ADMIN_DEFAULT_PASSWORD__。
+ */
+export async function redeemBetaCode(code: string): Promise<{ url: string; ttl: number } | null> {
+  const r = await signedRequest<{ url: string; ttl: number }>('POST', '/api/redeem-beta', { code });
+  return r && typeof (r as any).url === 'string' ? { url: (r as any).url, ttl: Number((r as any).ttl) || 300 } : null;
+}
+
+/** 测试端「发布新版本」：把测试通道 betaUpdate 提升到正式 update，正式端随即收到弹窗。 */
+export async function publishBetaVersion(): Promise<{ ok: boolean; versionCode?: number } | null> {
+  const r = await signedRequest<{ ok: boolean; versionCode?: number }>('POST', '/api/beta/publish', {});
+  return r && r.ok ? r : null;
 }
 
 export async function adminLogin(password: string): Promise<string | null> {

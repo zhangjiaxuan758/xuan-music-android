@@ -1,7 +1,12 @@
+// ==================================================================
+// 小轩音乐 · 闭源专有软件
+// 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
+// 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
+// ==================================================================
 /// <reference types="vite/client" />
 
 declare global {
-  // 当前文件：Xuan 构建常量、Vite 环境变量与宿主桥接类型声明。
+  
   interface ImportMetaEnv {
     readonly VITE_XUAN_API_BASE?: string;
   }
@@ -16,6 +21,10 @@ declare global {
   const __APP_VERSION_LABEL__: string;
   const __APP_RELEASE_CHANNEL__: string;
   const __DOCKER_STACK_VERSION__: string;
+  const __XUAN_VERSION_CODE__: number;
+  const __XUAN_BETA__: boolean;
+  
+  const __XUAN_NO_NET_WASM__: boolean;
 
   interface Window {
     __XUAN_RUNTIME_CONFIG__?: {
@@ -470,9 +479,9 @@ declare global {
       getAudioCache: (cacheKey: string) => Promise<ElectronAudioCacheEntry>;
       hasAudioCache: (cacheKey: string) => Promise<boolean>;
       saveAudioCache: (cacheKey: string, data: ArrayBuffer, mimeType?: string) => Promise<boolean>;
-      /** 主进程代下载音频并直写文件缓存（桌面端缓存歌曲用，绕开 CORS/禁设头） */
+      
       downloadAudioCache?: (cacheKey: string, url: string) => Promise<{ ok: boolean; size?: number; mimeType?: string; error?: string }>;
-      /** 主进程代下载小资源（封面等），以 base64 回传 */
+      
       fetchRemoteBytes?: (url: string) => Promise<{ ok: boolean; base64?: string; mimeType?: string; error?: string }>;
       getAudioCacheUsage: () => Promise<number>;
       getAudioCacheStats: () => Promise<ElectronAudioCacheStats>;
@@ -564,3 +573,4 @@ declare global {
 }
 
 export {};
+declare const XUAN_WM_04727777ee54: "XUANSRC|__XUAN_SERVER_BASE__|04727777ee54|e8f8c6a322c4";

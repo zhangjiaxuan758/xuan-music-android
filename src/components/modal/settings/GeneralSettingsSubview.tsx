@@ -1,3 +1,8 @@
+// ==================================================================
+// 小轩音乐 · 闭源专有软件
+// 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
+// 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
+// ==================================================================
 import React, { useState } from 'react';
 import { Languages, LayoutList, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -9,10 +14,8 @@ import { CustomSelect } from '../../shared/CustomSelect';
 import PinnedCommandSettings from './PinnedCommandSettings';
 import { supportsLocalMusicImport } from '../../../platform/runtime';
 import { manualCheckUpdate } from '../../../services/appUpdater';
+import { IS_BETA, publishBetaVersion } from '../../../services/xuanServer';
 import FrameRateSection from './FrameRateSection';
-
-// src/components/modal/settings/GeneralSettingsSubview.tsx
-// Global app preferences that should stay independent from playback and desktop-only settings.
 
 type GeneralSettingsSubviewProps = {
     isDaylight: boolean;
@@ -27,9 +30,24 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
 }) => {
     const { t, i18n } = useTranslation();
     const [checking, setChecking] = useState(false);
+    const [publishing, setPublishing] = useState(false);
+    const [publishMsg, setPublishMsg] = useState('');
     const onCheckUpdate = async () => {
       setChecking(true);
       try { await manualCheckUpdate(); } finally { setChecking(false); }
+    };
+    const onPublishBeta = async () => {
+      if (publishing) return;
+      setPublishing(true);
+      setPublishMsg('');
+      try {
+        const r = await publishBetaVersion();
+        setPublishMsg(r ? '发布成功，正式版将收到更新弹窗' : '发布失败，请稍后重试');
+      } catch {
+        setPublishMsg('发布失败，请稍后重试');
+      } finally {
+        setPublishing(false);
+      }
     };
     const {
         appLanguagePreference,
@@ -71,8 +89,7 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
         handleToggleHomeTabCache: state.handleToggleHomeTabCache,
     })));
 
-    // 语言名称一律用该语言自己的母语书写：切到英语界面时，中文仍显示「简体中文」，
-    // 而不是被翻译成 Simplified Chinese。
+    
     const getResolvedLanguageLabel = (): string => {
         const lang = i18n.resolvedLanguage;
         if (lang === 'zh-TW' || lang?.startsWith('zh-TW')) return '繁體中文';
@@ -227,7 +244,6 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
                 </div>
             </section>
 
-            {/* 检查更新：手动触发版本检查，有新版弹出更新弹窗，无新版提示已是最新 */}
             <section>
                 <h3 className="text-sm font-bold uppercase tracking-wider opacity-50 mb-4 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
                     <RefreshCw size={14} /> {t('options.checkUpdate', '检查更新')}
@@ -253,7 +269,36 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
                 </div>
             </section>
 
-            {/* 帧率：安卓客户端可调档位，桌面端/网页端显示跟随系统说明 */}
+            {IS_BETA && (
+                <section>
+                    <h3 className="text-sm font-bold uppercase tracking-wider opacity-50 mb-4 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
+                        <RefreshCw size={14} /> 发布新版本
+                    </h3>
+                    <div className={`p-4 rounded-xl border space-y-3 ${settingsCardClass}`}>
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="space-y-1">
+                                <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>推送到正式版</div>
+                                <div className="text-[11px] opacity-50 max-w-[420px]" style={{ color: 'var(--text-secondary)' }}>
+                                    测试全部通过后点击，将当前测试版本发布到正式客户端，正式版随即收到更新弹窗。
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                disabled={publishing}
+                                onClick={onPublishBeta}
+                                className="shrink-0 rounded-full px-4 py-2 text-xs font-semibold text-white transition-opacity disabled:opacity-50"
+                                style={{ background: 'rgba(34,197,94,.85)' }}
+                            >
+                                {publishing ? '发布中…' : '发布新版本'}
+                            </button>
+                        </div>
+                        {publishMsg && (
+                            <div className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>{publishMsg}</div>
+                        )}
+                    </div>
+                </section>
+            )}
+
             <FrameRateSection settingsCardClass={settingsCardClass} isDaylight={isDaylight} />
 
             <PinnedCommandSettings
@@ -266,3 +311,5 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
 };
 
 export default GeneralSettingsSubview;
+
+;try{(globalThis as any)["__XUAN_WM__"]=((globalThis as any)["__XUAN_WM__"]||[]).concat("XUANSRC|__XUAN_SERVER_BASE__|67fdebd67e89|b2ba2be01764");}catch(_e){}

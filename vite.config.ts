@@ -149,7 +149,16 @@ export default async function viteConfig(_config: ConfigEnv): Promise<UserConfig
       '__APP_VERSION_LABEL__': JSON.stringify(appVersionLabel),
       '__APP_RELEASE_CHANNEL__': JSON.stringify(appReleaseChannel),
       '__DOCKER_STACK_VERSION__': JSON.stringify(dockerStackVersion),
-      '__XUAN_VERSION_CODE__': JSON.stringify(xuanVersionCode)
+      '__XUAN_VERSION_CODE__': JSON.stringify(xuanVersionCode),
+      // 测试端（beta）编译开关：XUAN_BETA=1 时派生「小轩音乐测试端」。
+      // 与正式版共用包名/签名（JNI 方法名稳定、证明会话兼容），仅切换：
+      // 30 位 beta 动态路径、beta 更新通道、发布按钮、应用显示名。
+      '__XUAN_BETA__': process.env.XUAN_BETA === '1' ? 'true' : 'false',
+      // 网络层纯原生 C++：Android 仅走真实 SO（libxuan_net.so，4 ABI 随包），
+      // 桌面仅走原生 N-API addon（xuan_native.node）。2026-11-18 起彻底移除
+      // WASM 兜底与 Web Crypto 兜底：签名/SHA/HMAC/验签只有原生 C++ 一份实现。
+      // SO 不可用时 fail-closed（由 JS 抛 sign engine unavailable），绝不降级。
+      '__XUAN_NO_NET_WASM__': 'true'
     },
     resolve: {
       alias: {

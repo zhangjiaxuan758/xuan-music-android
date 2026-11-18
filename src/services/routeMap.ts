@@ -11,7 +11,9 @@ import { secureGet, secureSet } from './secureCache';
 
 export const BASE_URL = SERVER_URL;
 
-export const ROUTE_ROLE = 'app';
+// 测试端走 beta 通道：boot 表按 role='beta' 下发 30 位混合动态路径；
+// 正式版保持 'app'（22 位）。两者路径物理隔离、反查回同一套规范路径复用鉴权。
+export const ROUTE_ROLE = (typeof __XUAN_BETA__ !== 'undefined' && __XUAN_BETA__) ? 'beta' : 'app';
 
 const CACHE_KEY = 'xuan_route_map_v2';
 

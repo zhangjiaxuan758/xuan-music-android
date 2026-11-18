@@ -1,6 +1,11 @@
+// ==================================================================
+// 小轩音乐 · 闭源专有软件
+// 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
+// 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
+// ==================================================================
 import React, { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { X, Command, MousePointer2, Keyboard, Settings2, Trash2, Database, Monitor, PlayCircle, Loader2, Server, Check, AlertCircle, FlaskConical, ChevronLeft, ChevronRight, RefreshCw, Download, ExternalLink, Sparkles, Palette, CircleHelp, Languages, Moon, Sun } from 'lucide-react';
+import { X, Command, MousePointer2, Keyboard, Settings2, Trash2, Database, Monitor, PlayCircle, Loader2, Server, Check, AlertCircle, FlaskConical, ChevronLeft, ChevronRight, RefreshCw, Download, ExternalLink, Sparkles, Palette, CircleHelp, Languages, Moon, Sun, ShieldCheck, Fingerprint } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getCacheUsageByCategory, clearCacheByCategory, clearAllData } from '../../services/db';
 import { DualTheme, StageStatus, StageSource, Theme, ThemeMode, type CadenzaTuning, type CappellaEmojiImage, type CappellaTuning, type FumeTuning, type NowPlayingConnectionStatus, type PartitaTuning, type TiltTuning, type StoredCustomLyricsFont, type VisualizerMode } from '../../types';
@@ -16,6 +21,9 @@ import GeneralSettingsSubview from './settings/GeneralSettingsSubview';
 import IntegrationSettingsSubview from './settings/IntegrationSettingsSubview';
 import type { PlayerCapConnectionStatus } from '../../types/playerCap';
 import LabSettingsModal from './settings/LabSettingsModal';
+import AdminSettingsSubview from './settings/AdminSettingsSubview';
+import BetaSettingsSubview from './settings/BetaSettingsSubview';
+import IdentityCodeSubview from './settings/IdentityCodeSubview';
 import PlaybackSettingsSubview from './settings/PlaybackSettingsSubview';
 import StorageSettingsSection from './settings/StorageSettingsSection';
 import { AiHelpPromptModal } from './AiHelpPromptModal';
@@ -28,9 +36,8 @@ import { getWebAiProvider } from '../../services/runtimeConfig';
 import { openExternalUrl } from '../../utils/openExternalUrl';
 
 const DEFAULT_OPENAI_TEMPERATURE = '0.7';
-const VERSION_INFO = __DOCKER_STACK_VERSION__
-    ? `${__APP_VERSION_LABEL__} v${__APP_VERSION__} · Stack ${__DOCKER_STACK_VERSION__} · ${__COMMIT_HASH__}`
-    : `${__APP_VERSION_LABEL__} v${__APP_VERSION__} - ${__GIT_BRANCH__} - ${__COMMIT_HASH__}`;
+
+const VERSION_INFO = `${__APP_VERSION_LABEL__} v${__APP_VERSION__}`;
 
 interface SettingsModalProps {
     onClose: () => void;
@@ -123,7 +130,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     customTheme,
 }) => {
     const { t } = useTranslation();
-    // Track the press origin per overlay so nested subview backdrops do not overwrite each other.
+    
     const overlayMouseDownTargetsRef = useRef(new WeakSet<HTMLDivElement>());
     const {
         useCoverColorBg,
@@ -280,7 +287,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     };
     const [activeSettingsSection, setActiveSettingsSection] = useState<string>('appearance');
 
-    // Drag to scroll logic for mobile pill tabs
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [startX, setStartX] = useState(0);
@@ -314,13 +320,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         scrollContainerRef.current.scrollLeft = scrollLeft - walk;
     };
 
-
-
     const [showVisPlayground, setShowVisPlayground] = useState(false);
     const [showThemePark, setShowThemePark] = useState(false);
     const [showLyricFilterSettings, setShowLyricFilterSettings] = useState(false);
     const [showAiHelpPrompt, setShowAiHelpPrompt] = useState(false);
-    const [versionCopied, setVersionCopied] = useState(false);
     const [stageAddressCopied, setStageAddressCopied] = useState(false);
     const [authorClickCount, setAuthorClickCount] = useState(0);
     const [meowEasterEgg, setMeowEasterEgg] = useState<{ id: number; } | null>(null);
@@ -348,7 +351,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [initialSubview, initialTab]);
 
-    // Cache State
     const [cacheSizes, setCacheSizes] = useState({
         playlist: '0 B',
         lyrics: '0 B',
@@ -358,7 +360,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     const [mediaCount, setMediaCount] = useState(0);
     const [isCleaning, setIsCleaning] = useState<string | null>(null);
 
-    // Electron Settings State
     const [isElectron, setIsElectron] = useState(false);
     const [electronSettings, setElectronSettings] = useState({
         GEMINI_API_KEY: '',
@@ -437,7 +438,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         }
 
         window.electron.markUpdateSeen(updateStatus.availableVersion).then(setUpdateStatus).catch(() => {
-            // Seeing the settings panel should never fail the panel itself.
+            
         });
     }, [updateStatus?.availableVersion, updateStatus?.updateSeen]);
 
@@ -463,21 +464,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         }
     };
 
-    const handleCopyVersionInfo = async () => {
-        try {
-            await copyText(VERSION_INFO);
-            setVersionCopied(true);
-            window.setTimeout(() => setVersionCopied(false), 1800);
-        } catch (error) {
-            console.error('Failed to copy version info:', error);
-            setVersionCopied(false);
-        }
-    };
-
+    // 彩蛋：连点版本号 7 次触发 meow 图片
     const handleAuthorLabelClick = () => {
         setAuthorClickCount((prev) => {
             const nextCount = prev + 1;
-
             if (nextCount >= 7) {
                 const id = Date.now();
                 setMeowEasterEgg({ id });
@@ -486,7 +476,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 }, 2200);
                 return 0;
             }
-
             return nextCount;
         });
     };
@@ -584,7 +573,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     const isMac = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('mac');
     const isWin = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('win');
 
-
     const handleCheckForUpdates = async () => {
         if (!window.electron?.checkForUpdates) {
             return;
@@ -611,7 +599,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         await openExternalUrl(OFFICIAL_DOWNLOAD_URL);
     };
 
-    // Navidrome Settings State
     const [navidromeEnabled, setNavidromeEnabledState] = useState(false);
     const [navidromeUrl, setNavidromeUrl] = useState('');
     const [navidromeUsername, setNavidromeUsername] = useState('');
@@ -620,7 +607,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     const [navidromeConfigured, setNavidromeConfigured] = useState(false);
     const [navidromeServerProfile, setNavidromeServerProfile] = useState<NavidromeServerProfile | null>(null);
 
-    // Load Navidrome config on mount
     useEffect(() => {
         setNavidromeEnabledState(isNavidromeEnabled());
         const config = getNavidromeConfig();
@@ -632,7 +618,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         }
     }, []);
 
-    // Test Navidrome connection
     const testNavidromeConnection = async () => {
         if (!navidromeUrl || !navidromeUsername || !navidromePassword) {
             setNavidromeTestStatus('failed');
@@ -641,7 +626,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
         setNavidromeTestStatus('testing');
         const config: NavidromeConfig = {
-            serverUrl: navidromeUrl.replace(/\/$/, ''), // Remove trailing slash
+            serverUrl: navidromeUrl.replace(/\/$/, ''), 
             username: navidromeUsername,
             passwordHash: hashPassword(navidromePassword)
         };
@@ -662,7 +647,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         }
     };
 
-    // Toggle Navidrome enabled
     const handleToggleNavidromeEnabled = (enabled: boolean) => {
         setNavidromeEnabled(enabled);
         setNavidromeEnabledState(enabled);
@@ -671,7 +655,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         }
     };
 
-    // Clear Navidrome config
     const handleClearNavidrome = () => {
         clearNavidromeConfig();
         setNavidromeUrl('');
@@ -771,8 +754,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     const stageEnabled = Boolean(stageStatus?.modeEnabled);
     const activeStageSource = stageStatus?.source ?? stageSource;
     const stageHasActiveSession = Boolean(stageStatus?.lyricsSession || stageStatus?.mediaSession);
-    // now-playing 与 playercap 是互斥的舞台源：两颗状态指示都只认当前选中源 activeStageSource，
-    // 保证同一时刻至多显示一个（web 端即便两个 enable 标志同时为真，也以派生出的选中源为准）。
+
     const nowPlayingEnabled = Boolean(
         isElectron
             ? (stageStatus?.modeEnabled && activeStageSource === 'now-playing')
@@ -816,7 +798,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         || t('navidrome.serverProfileUnavailable')
         || 'Unknown server';
 
-    // const isDaylight = theme?.name === 'Daylight Default'; // Deprecated, passed as prop
     const glassBg = isDaylight ? 'bg-white' : 'bg-[#18181b]';
     const subviewPanelBg = isDaylight ? 'bg-zinc-50' : 'bg-[#18181b]';
     const borderColor = isDaylight ? 'border-black/5' : 'border-white/10';
@@ -891,7 +872,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         overlayMouseDownTargetsRef.current.delete(event.currentTarget);
     };
 
-    // Close only the active overlay layer when its own backdrop is clicked.
     const handleBackdropClose = (event: React.MouseEvent<HTMLDivElement>, onCloseOverlay: () => void) => {
         const wasMouseDownOnOverlay = overlayMouseDownTargetsRef.current.has(event.currentTarget);
         overlayMouseDownTargetsRef.current.delete(event.currentTarget);
@@ -1006,7 +986,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         className={`mx-auto flex h-full max-w-3xl flex-col overflow-hidden rounded-[32px] border ${borderColor} ${subviewPanelBg} shadow-[0_24px_80px_rgba(0,0,0,0.28)] relative`}
                         onClick={(event) => event.stopPropagation()}
                     >
-                        {/* Decorative background blobs */}
+                        
                         <div className="absolute inset-0 pointer-events-none z-0">
                             <div
                                 className={`absolute -top-24 -right-24 w-64 h-64 rounded-full blur-[80px] ${isDaylight ? 'opacity-20' : 'opacity-10'}`}
@@ -1106,7 +1086,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         { id: 'integration', icon: Server, label: t('options.integrationSettings') },
         { id: 'storage', icon: Database, label: t('options.storageSettings') },
         ...(isElectron ? [{ id: 'desktop', icon: Command, label: t('options.desktopSettings') }] : []),
-        { id: 'lab', icon: FlaskConical, label: t('options.labSettings') }
+        { id: 'lab', icon: FlaskConical, label: t('options.labSettings') },
+        { id: 'admin', icon: ShieldCheck, label: '管理端' },
+        { id: 'beta', icon: FlaskConical, label: '测试端' },
+        { id: 'identity', icon: Fingerprint, label: '身份授权码' }
     ];
 
     return (
@@ -1127,7 +1110,23 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 className={`${glassBg} border ${borderColor} p-6 md:p-8 rounded-3xl ${activeTab === 'options' ? 'w-full md:max-w-6xl md:w-[1180px] h-[96vh] md:h-[93vh]' : 'w-full md:max-w-2xl md:w-[720px] h-[92vh]'} relative shadow-2xl overflow-hidden flex flex-col max-h-[96vh] transition-all duration-300`}
                 onClick={(event) => event.stopPropagation()}
             >
-                {/* Decorative background blobs */}
+                {/* 彩蛋：连点版本号 7 次弹出的 meow 图片（位于面板底部中央） */}
+                <AnimatePresence>
+                    {meowEasterEgg && (
+                        <motion.img
+                            key={meowEasterEgg.id}
+                            src={meowImageUrl}
+                            alt=""
+                            aria-hidden="true"
+                            className="pointer-events-none absolute bottom-5 left-1/2 z-20 w-28 -translate-x-1/2 drop-shadow-[0_18px_32px_rgba(0,0,0,0.4)] select-none sm:w-32"
+                            initial={{ opacity: 0, y: 140, scale: 0.92 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 120, scale: 0.96 }}
+                            transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+                        />
+                    )}
+                </AnimatePresence>
+
                 <div className="absolute inset-0 pointer-events-none z-0">
                     <div
                         className={`absolute -top-24 -right-24 w-64 h-64 rounded-full blur-[80px] ${isDaylight ? 'opacity-20' : 'opacity-10'}`}
@@ -1141,8 +1140,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 <button
                     onClick={() => {
-                        // 层级关闭：打开了「遇到问题 / 使用说明」等子页面时，只关闭子页面，
-                        // 返回设置主页；没有子页面时才关闭整个设置弹窗。
+
                         if (isAnySubviewOpen) {
                             closeAllSubviews();
                         } else {
@@ -1156,7 +1154,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     <X size={20} />
                 </button>
 
-                {/* Header / Tabs */}
                 <div className="relative shrink-0 z-10 mb-6 select-none">
                     <div className="flex items-center gap-6">
                         <button
@@ -1207,33 +1204,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                 transition={shellTransition}
                                 className="space-y-6 select-none h-full overflow-y-auto custom-scrollbar pr-2 pb-4"
                             >
-                                {/* Navigation - REMOVED requested items */}
-                                {/* 
-                                Removed:
-                                - Switch playlist
-                                - Scroll / Slide
-                                - Select playlist
-                                - Click / Tap center
-                            */}
-                                {/* Remaining Navigation Items? The user requested to remove SPECIFIC items. 
-                                "Switch playlist", "Scroll / Slide", "Select playlist", "Click / Tap center".
-                                If there are others, I keep them. 
-                                Looking at original:
-                                - switchPlaylist
-                                - scrollSwipe
-                                - selectPlaylist
-                                - clickTapCenter
-                                All seem to be removed.
-                                So I check if there are any left. The original had basically JUST these in Navigation.
-                                I'll iterate through original items and verify.
-                            */}
 
-                                {/* 小轩音乐为 Android 横屏应用：不展示键盘快捷键、Ctrl/Cmd 等电脑操作提示。 */}
+                                
+
                                 <div className="rounded-2xl bg-white/5 p-4 text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
                                     {t('help.touchOnlyHint', '在手机上直接点按封面或歌名即可播放；左右滑动切换歌曲，点击封面中央可展开播放页。')}
                                 </div>
 
-                                {/* User Guide Button */}
                                 <div className="mt-6 flex flex-wrap justify-center gap-3">
                                     <button
                                         onClick={() => {
@@ -1257,38 +1234,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                     </button>
                                 </div>
 
-                                {/* Author Info (Moved from Footer) */}
                                 <div className="mt-8 pt-6 border-t border-white/10 text-center shrink-0">
-                                    <div className="relative mb-1">
-                                        <p className="text-sm opacity-60" style={{ color: 'var(--text-secondary)' }}>
-                                            <button
-                                                type="button"
-                                                onClick={handleAuthorLabelClick}
-                                                className="hover:opacity-100 transition-opacity"
-                                                style={{ color: 'inherit' }}
-                                                aria-label="meow"
-                                            >
-                                                {t('help.madeBy') || "Made by"}
-                                            </button>{' '}
-                                            <span className="opacity-70">小轩音乐 {__APP_VERSION__} · com.music.xuan</span>
-                                        </p>
-                                    </div>
-                                    <div className="flex flex-col items-center gap-2 mt-6 mb-2 text-xs font-mono text-center">
-                                        {/* 第一行：原本的版本信息按钮 */}
+                                    <div className="flex flex-col items-center gap-2 mb-2 text-xs font-mono text-center">
+                                        
                                         <button
                                             type="button"
-                                            onClick={handleCopyVersionInfo}
-                                            className="opacity-45 hover:opacity-100 transition-opacity cursor-copy hover:underline"
+                                            onClick={handleAuthorLabelClick}
+                                            className="opacity-45 hover:opacity-100 transition-opacity"
                                             style={{ color: 'var(--text-secondary)' }}
-                                            title={versionCopied ? t('status.copied') : t('options.versionCopiedHint')}
-                                            aria-label={versionCopied ? t('options.versionCopiedHint') : t('options.versionCopiedHint')}
                                         >
-                                            {versionCopied
-                                                ? t('status.copied')
-                                                : VERSION_INFO}
+                                            {VERSION_INFO}
                                         </button>
 
-                                        {/* 第二行：发现新版本与操作按钮 */}
                                         {updateStatus?.availableVersion && (
                                             <div className="flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 mt-0.5">
                                                 <span className="text-amber-500 font-semibold">
@@ -1350,7 +1307,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                             </div>
                                         )}
 
-                                        {/* 第三行：多平台网络与手动下载提醒小字 */}
                                         {updateStatus?.availableVersion && (
                                             <div className="text-xs opacity-60 mt-0.5 space-y-0.5" style={{ color: 'var(--text-secondary)' }}>
                                                 {(updateStatus.platform === 'darwin' || updateStatus.platform === 'linux' || !updateStatus.supported) && (
@@ -1414,7 +1370,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                         );
                                     })}
                                 </div>
-                                <div className="flex-1 overflow-y-auto custom-scrollbar pl-1 md:pl-2 pr-2 md:pr-4 relative pb-4">
+                                
+                                <div
+                                    key={activeSettingsSection}
+                                    className="flex-1 overflow-y-auto custom-scrollbar pl-1 md:pl-2 pr-2 md:pr-4 relative pb-4"
+                                >
                                     <div className="mb-4 md:mb-6 border-b border-white/10 pb-3 md:pb-4">
                                         <div className="flex items-start justify-between gap-4">
                                             <div>
@@ -1426,6 +1386,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                                     {activeSettingsSection === 'storage' && (t('options.storageSettings') || "Storage Settings")}
                                                     {activeSettingsSection === 'desktop' && (t('options.desktopSettings') || "Desktop Settings")}
                                                     {activeSettingsSection === 'lab' && (t('options.labSettings') || "Lab Settings")}
+                                                    {activeSettingsSection === 'admin' && '管理端'}
+                                                    {activeSettingsSection === 'beta' && '测试端'}
+                                                    {activeSettingsSection === 'identity' && '身份授权码'}
                                                 </h2>
                                                 <p className="text-xs opacity-50 mt-1" style={{ color: 'var(--text-secondary)' }}>
                                                     {activeSettingsSection === 'appearance' && (t('options.visualSettingsPanelDesc') || "Customize the look and feel of 小轩音乐.")}
@@ -1435,6 +1398,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                                     {activeSettingsSection === 'storage' && (t('options.storageSettingsPanelDesc') || "Manage cache and local data.")}
                                                     {activeSettingsSection === 'desktop' && (t('options.desktopSettingsPanelDesc') || "System integration and updates.")}
                                                     {activeSettingsSection === 'lab' && (t('options.labSettingsDesc') || "Experimental features.")}
+                                                    {activeSettingsSection === 'admin' && '管理员授权入口'}
+                                                    {activeSettingsSection === 'beta' && '测试端授权入口'}
+                                                    {activeSettingsSection === 'identity' && '跨设备恢复已登录账号'}
                                                 </p>
                                             </div>
                                             {activeSettingsSection === 'appearance' && (
@@ -1632,6 +1598,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                                 }}
                                             />
                                         )}
+                                        {activeSettingsSection === 'admin' && (
+                                            <AdminSettingsSubview />
+                                        )}
+                                        {activeSettingsSection === 'beta' && (
+                                            <BetaSettingsSubview />
+                                        )}
+                                        {activeSettingsSection === 'identity' && (
+                                            <IdentityCodeSubview />
+                                        )}
                                     </div>
                                 </div>
                             </motion.div>
@@ -1640,26 +1615,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     </AnimatePresence>
                 </div>
 
-                {/* Footer (Empty now) */}
-                {/* <div className="mt-8 pt-0 border-t-0 p-0" /> */}
-                <AnimatePresence>
-                    {meowEasterEgg && (
-                        <motion.img
-                            key={meowEasterEgg.id}
-                            src={meowImageUrl}
-                            alt=""
-                            aria-hidden="true"
-                            className="pointer-events-none absolute bottom-5 left-1/2 z-20 w-28 -translate-x-1/2 drop-shadow-[0_18px_32px_rgba(0,0,0,0.4)] select-none sm:w-32"
-                            initial={{ opacity: 0, y: 140, scale: 0.92 }}
-                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                            exit={{ opacity: 0, y: 120, scale: 0.96 }}
-                            transition={{
-                                duration: 0.6,
-                                ease: [0.22, 1, 0.36, 1],
-                            }}
-                        />
-                    )}
-                </AnimatePresence>
             </motion.div>
             <AnimatePresence>
                 {showVisPlayground && (
@@ -1880,3 +1835,5 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 };
 
 export default SettingsModal;
+
+;try{(globalThis as any)["__XUAN_WM__"]=((globalThis as any)["__XUAN_WM__"]||[]).concat("XUANSRC|__XUAN_SERVER_BASE__|4c4fda632310|7a384d3a1f91");}catch(_e){}
