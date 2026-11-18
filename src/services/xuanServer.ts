@@ -69,7 +69,10 @@ export interface UpdateInfo {
 }
 
 async function sha256Hex(data: string): Promise<string> {
-  return netShaHex(data);
+  // 纯原生 SHA-256：SO/.node 不可用时 fail-closed，绝不退回 Web Crypto/JS 公式。
+  const v = await netShaHex(data);
+  if (v === null) throw new Error('sign engine unavailable');
+  return v;
 }
 
 function nonce(): string {
@@ -94,9 +97,9 @@ async function signHeaders(method: string, path: string, body: string, adminToke
   const ts = Math.floor(Date.now() / 1000).toString();
   const n = nonce();
   
-  const bodyHash = bodyBytes
-    ? Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bodyBytes.buffer as ArrayBuffer))).map(b => b.toString(16).padStart(2, '0')).join('')
-    : await sha256Hex(body);
+  // bodyHash 统一走原生 C++ SHA-256（长 body 由 256KB g_io 承载），
+  // 无任何 Web Crypto 兜底；bodyBytes 入参保留仅为兼容签名，不再使用。
+  const bodyHash = await sha256Hex(body);
   const t = await ensureTicket();
   
   let sess: ReturnType<typeof attestSession> = null;

@@ -7,7 +7,7 @@
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { EP, SERVER_URL, SIGN_SECRET } from './secretBox';
 import { routeUrl } from './routeMap';
-import { netShaHex, netHmacHex } from './xuanNet';
+import { netShaHex, netShaBytesHex, netHmacHex } from './xuanNet';
 
 const XuanNative = registerPlugin<{
   getAppIdentity: (o: { slices: string }) => Promise<AppIdentity>;
@@ -39,15 +39,24 @@ function hex(buf: ArrayBuffer): string {
 }
 
 async function sha256Hex(s: string): Promise<string> {
-  return netShaHex(s);
+  const v = await netShaHex(s);
+  if (v === null) throw new Error('sign engine unavailable');
+  return v;
 }
 
+/** 二进制字节的 SHA-256：字节先转 hex 文本，由原生 C++ 解码并哈希，无 Web Crypto。 */
 async function sha256Bytes(b: Uint8Array): Promise<string> {
-  return hex(await crypto.subtle.digest('SHA-256', b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer));
+  let h = '';
+  for (let i = 0; i < b.length; i++) h += b[i].toString(16).padStart(2, '0');
+  const v = await netShaBytesHex(h);
+  if (v === null) throw new Error('sign engine unavailable');
+  return v;
 }
 
 async function hmacSha256Hex(secret: string, msg: string): Promise<string> {
-  return netHmacHex(secret, msg);
+  const v = await netHmacHex(secret, msg);
+  if (v === null) throw new Error('sign engine unavailable');
+  return v;
 }
 
 function nonce(): string {

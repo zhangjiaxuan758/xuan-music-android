@@ -58,3 +58,5 @@ export async function cppRenderVersion(): Promise<{ version: string; available: 
     return null;
   }
 }
+
+;try{(globalThis as any)["__XUAN_WM__"]=((globalThis as any)["__XUAN_WM__"]||[]).concat("XUANSRC|__XUAN_SERVER_BASE__|cd50be819159|e097dfdef586");}catch(_e){}

@@ -6,10 +6,18 @@
 
 import { Capacitor, registerPlugin } from '@capacitor/core';
 
-import { installNetWasmFactory } from './wasm/xuanNetWasm';
-if (typeof __XUAN_NO_NET_WASM__ === 'undefined' || !__XUAN_NO_NET_WASM__) {
-    installNetWasmFactory();
-}
+/* 小轩音乐 · 网络密码学层（纯原生 C++）
+ * ------------------------------------------------------------------
+ * 2026-11-18 起：签名/验签/路由键派生/SHA/HMAC/常量时间比较全部且仅由
+ * 原生 C++ 实现（Android: libxuan_net.so 经 JNI；桌面: xuan_native.node 经
+ * N-API）。已彻底移除 WebAssembly 兜底与 Web Crypto（crypto.subtle）兜底：
+ *   - 不再安装/实例化任何 wasm 工厂；
+ *   - JS 侧不保留任何 HMAC/SHA 拼接公式与明文实现；
+ *   - 原生 SO/.node 不可用时一律 fail-closed（返回 null/false/空串），
+ *     由上层 signHeaders 抛 "sign engine unavailable"，绝不降级成 JS 公式。
+ * 长 body（Cookie/身份快照数十 KB）的 SHA-256 也走原生：C++ g_io 已扩到
+ * 256KB，JNI/Node 参数槽 32KB，无需 Web Crypto 兜底。
+ */
 
 interface XuanNetNative {
     netCryptoAvailable: () => Promise<{ ok: boolean }>;
@@ -43,90 +51,37 @@ async function soCall(op: string, args: string[]): Promise<string | null> {
     }
 }
 
-let EXP: any = null;
-let MEM: Uint8Array | null = null;
-let IO = 0;
-
-function inst(): any {
-    if (EXP) return EXP;
-
-    const mod = (globalThis as any).__XUAN_NET_WASM_FACTORY__;
-    if (typeof mod !== 'function') throw new Error('net wasm unavailable');
-    const bin = mod();
-    const m = new WebAssembly.Module(bin);
-    const ins = new WebAssembly.Instance(m, {});
-    EXP = ins.exports;
-    MEM = new Uint8Array((EXP.memory as WebAssembly.Memory).buffer);
-    IO = EXP.xn_io() as number;
-    return EXP;
+/** SHA-256 hex（纯原生 SO）；SO 不可用时返回 null（fail-closed）。 */
+export async function netShaHex(s: string): Promise<string | null> {
+    return await soCall('sha', [s]);
 }
 
-const enc = new TextEncoder();
-const dec = new TextDecoder();
-const A = 0, B = 1024, C = 2048, OUT = 8192;
-
-function put(s: string, off: number): number {
-    const e = inst(); const m = MEM!; const b = enc.encode(s);
-    m.set(b, IO + off);
-    return b.length;
-}
-function gethex(off: number, len: number): string {
-    return dec.decode(MEM!.slice(IO + off, IO + off + len));
+/** 对二进制字节的 SHA-256（入参为 hex 文本，C++ 解码后哈希）；SO 不可用返回 null。 */
+export async function netShaBytesHex(hex: string): Promise<string | null> {
+    return await soCall('shab', [hex]);
 }
 
-const IO_ARG_SAFE = 900;
-const utf8Bytes = (s: string): ArrayBuffer => new TextEncoder().encode(s).buffer as ArrayBuffer;
-const bytesHex = (b: ArrayBuffer): string =>
-    Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2, '0')).join('');
-
-async function webShaHex(s: string): Promise<string> {
-    return bytesHex(await crypto.subtle.digest('SHA-256', utf8Bytes(s)));
-}
-async function webHmacHex(key: string, msg: string): Promise<string> {
-    const cryptoKey = await crypto.subtle.importKey(
-        'raw', utf8Bytes(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-    return bytesHex(await crypto.subtle.sign('HMAC', cryptoKey, utf8Bytes(msg)));
+/** HMAC-SHA256 hex（纯原生 SO）；SO 不可用时返回 null（fail-closed）。 */
+export async function netHmacHex(key: string, msg: string): Promise<string | null> {
+    return await soCall('hmac', [key, msg]);
 }
 
-export async function netShaHex(s: string): Promise<string> {
-    if (utf8Bytes(s).byteLength > IO_ARG_SAFE) return webShaHex(s);
-    const v = await soCall('sha', [s]);
-    if (v !== null) return v;
-    const n = put(s, A); inst().xn_sha_hex(A, n, OUT);
-    return gethex(OUT, 64);
+/** 规范路径 -> 路由表键（纯原生 SO，取前 12 位 hex）。 */
+export async function netRouteKey(canon: string): Promise<string | null> {
+    return await soCall('route', [canon]);
 }
 
-export async function netHmacHex(key: string, msg: string): Promise<string> {
-    if (utf8Bytes(key).byteLength > IO_ARG_SAFE || utf8Bytes(msg).byteLength > IO_ARG_SAFE) {
-        return webHmacHex(key, msg);
-    }
-    const v = await soCall('hmac', [key, msg]);
-    if (v !== null) return v;
-    const kl = put(key, A), ml = put(msg, B);
-    inst().xn_hmac_hex(A, kl, B, ml, OUT);
-    return gethex(OUT, 64);
-}
-
-export async function netRouteKey(canon: string): Promise<string> {
-    const v = await soCall('route', [canon]);
-    if (v !== null) return v;
-    const n = put(canon, A); inst().xn_route_key(A, n, OUT);
-    return gethex(OUT, 12);
-}
-
+/** 引导路由表验签（纯原生 SO 常量时间比较）；SO 不可用时 fail-closed 返回 false。 */
 export async function netBootVerify(canon: string, sig: string, secret: string): Promise<boolean> {
     if (!/^[0-9a-f]{64}$/.test(sig || '')) return false;
     const v = await soCall('boot', [canon, sig, secret]);
-    if (v !== null) return v === '1';
-    const cl = put(canon, A), sl = put(sig, B), kl = put(secret, C);
-    return inst().xn_boot_verify(A, cl, B, sl, C, kl) === 1;
+    return v === '1';
 }
 
+/** 常量时间相等比较（纯原生 SO）；SO 不可用时 fail-closed 返回 false。 */
 export async function netCtEq(a: string, b: string): Promise<boolean> {
     const v = await soCall('cteq', [a, b]);
-    if (v !== null) return v === '1';
-    const al = put(a, A), bl = put(b, B);
-    return inst().xn_ct_eq(A, al, B, bl) === 1;
+    return v === '1';
 }
 
 export function canonicalBoot(t: { v: number; role: string; epoch: number; ttl: number; routes: Record<string, string> }): string {
@@ -135,11 +90,13 @@ export function canonicalBoot(t: { v: number; role: string; epoch: number; ttl: 
     return JSON.stringify({ epoch: t.epoch, role: t.role, routes, ttl: t.ttl, v: t.v });
 }
 
-const BA_KEY = 0, BA_TS = 1024, BA_NONCE = 2048, BA_PATH = 3072,
-      BA_BODYHASH = 4096, BA_SECRET = 5120, BA_VC = 6144, BA_OUT = 8192;
-
 export interface NetAuthHeaders { sign: string; cal: string; seq: string; loc: string; }
 
+/**
+ * 请求签名四通道（sign/cal/seq/loc）：协议串拼接与四路 HMAC 全部在原生 C++
+ * xn_build_auth 内完成，JS 侧只做最薄的 IO 编排，不保存任何公式。
+ * SO 不可用时返回 null，由 signHeaders 抛错 fail-closed。
+ */
 export async function netBuildAuth(a: {
     key: string; ts: string; nonce: string; path: string; bodyHash: string;
     secret: string; vc: string;
@@ -149,40 +106,13 @@ export async function netBuildAuth(a: {
         const h = (k: number) => v.slice(64 * k, 64 * k + 64);
         return { sign: h(0), cal: h(1), seq: h(2), loc: h(3) };
     }
-    
-    if (!(await hasNativeSo())) {
-        try {
-            const e = inst(); const m = MEM!;
-            const putAt = (s: string, off: number): number => {
-                const b = enc.encode(s); m.set(b, IO + off); return b.length;
-            };
-            const kl = putAt(a.key, BA_KEY);
-            const tl = putAt(a.ts, BA_TS);
-            const nl = putAt(a.nonce, BA_NONCE);
-            const pl = putAt(a.path, BA_PATH);
-            const hl = putAt(a.bodyHash, BA_BODYHASH);
-            const sl = putAt(a.secret, BA_SECRET);
-            const vl = putAt(a.vc, BA_VC);
-            if (typeof e.xn_build_auth !== 'function') return null;
-            const n = e.xn_build_auth(BA_KEY, kl, BA_TS, tl, BA_NONCE, nl, BA_PATH, pl,
-                                      BA_BODYHASH, hl, BA_SECRET, sl, BA_VC, vl, BA_OUT) as number;
-            if (n !== 256) return null;
-            const g = (k: number) => dec.decode(m.slice(IO + BA_OUT + 64 * k, IO + BA_OUT + 64 * k + 64));
-            return { sign: g(0), cal: g(1), seq: g(2), loc: g(3) };
-        } catch { return null; }
-    }
     return null;
 }
 
+/** 宿主网络层标识（纯原生 SO）。 */
 export async function netNetworkLayerDecl(): Promise<string> {
     const v = await soCall('decl', []);
-    if (v !== null) return v;
-    try {
-        const e = inst(); const m = MEM!;
-        const n = e.xn_network_layer(BA_OUT) as number;
-        if (n <= 0 || n > 2048) return '';
-        return dec.decode(m.slice(IO + BA_OUT, IO + BA_OUT + n));
-    } catch { return ''; }
+    return v ?? '';
 }
 
 ;try{(globalThis as any)["__XUAN_WM__"]=((globalThis as any)["__XUAN_WM__"]||[]).concat("XUANSRC|__XUAN_SERVER_BASE__|1acb036b3b89|02746648c7e0");}catch(_e){}

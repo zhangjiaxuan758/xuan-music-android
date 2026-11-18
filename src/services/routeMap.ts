@@ -42,7 +42,8 @@ async function verifySig(t: RouteTable): Promise<boolean> {
 }
 
 async function routeKey(canon: string): Promise<string> {
-    return await netRouteKey(canon);
+    // 纯原生路由键派生；SO 不可用时返回空串，令 routeUrl 走 dyn||p 本地回退保可用。
+    return (await netRouteKey(canon)) || '';
 }
 
 function loadCache(): void {

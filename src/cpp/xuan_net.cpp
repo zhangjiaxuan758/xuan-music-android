@@ -23,6 +23,8 @@
 typedef unsigned char u8;
 typedef unsigned int u32;
 typedef unsigned long long u64;
+/* 指针宽度整数：Windows LLP64 下 unsigned long 仅 32 位，不能用它截指针。 */
+typedef __UINTPTR_TYPE__ uptr;
 
 static const u32 K256[64] = {
     0x428a2f98u,0x71374491u,0xb5c0fbcfu,0xe9b5dba5u,0x3956c25bu,0x59f111f1u,0x923f82a4u,0xab1c5ed5u,
@@ -85,10 +87,13 @@ static void to_hex(const u8* d, int n, u8* out) {
     for (int i = 0; i < n; i++) { out[2*i] = (u8)HEX[d[i] >> 4]; out[2*i+1] = (u8)HEX[d[i] & 15]; }
 }
 
-/* HMAC-SHA256：key 超 64 字节先 hash；msg 与本函数内拼接缓冲上限 8192。 */
-static u8 g_pad[8192];
+/* HMAC-SHA256：key 超 64 字节先 hash；msg 与本函数内拼接缓冲上限。
+ * 2026-11-18：从 8KB 扩到 64KB，使长 body（如网易云 Cookie 快照、身份快照
+ * 数 KB~数十 KB）的 SHA-256/HMAC 全部在原生 C++ 内完成，JS 侧彻底移除
+ * Web Crypto 兜底——签名链路只有原生 SO/.node 一份实现，无 JS 明文公式。 */
+static u8 g_pad[65536];
 /* 验签/路由键拼装消息用独立缓冲，避免与 hmac_hex 内部工作缓冲 g_pad 冲突。 */
-static u8 g_msg[8192];
+static u8 g_msg[65536];
 static void hmac_hex(const u8* key, int klen, const u8* msg, int mlen, u8 out[64]) {
     u8 kb[64];
     for (int i = 0; i < 64; i++) kb[i] = 0;
@@ -112,8 +117,40 @@ static int ct_eq(const u8* a, const u8* b, int n) {
     return diff == 0 ? 1 : 0;
 }
 
-/* ---- IO 区：JS/宿主把输入写进这里，读回输出 ---- */
-static u8 g_io[16384];
+/* hex 字符 -> 半字节，返回 -1 表示非法字符。 */
+static int hex_nib(u8 c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* 把 ASCII hex 解码成字节后做 SHA-256。用于 APK 切片等二进制内容的哈希：
+ * JS 侧把 Uint8Array 转 hex 文本（ASCII 安全）传入，解码与哈希全在原生完成，
+ * 彻底替代 crypto.subtle.digest，无 Web Crypto 兜底。 */
+static int sha256_hexbytes(const u8* hex, int hlen, u8 out[32]) {
+    if (hlen < 0 || (hlen & 1) != 0) return 0;
+    int n = hlen / 2;
+    if (n > 32760) return 0;
+    u8 buf[32760];
+    for (int i = 0; i < n; i++) {
+        int hi = hex_nib(hex[2*i]), lo = hex_nib(hex[2*i+1]);
+        if (hi < 0 || lo < 0) return 0;
+        buf[i] = (u8)((hi << 4) | lo);
+    }
+    sha256_raw(buf, n, out);
+    return 1;
+}
+
+/* ---- IO 区：JS/宿主把输入写进这里，读回输出 ----
+ * 2026-11-18：16KB → 256KB。原因：JS 侧移除 Web Crypto 兜底后，长 body
+ * （Cookie/身份快照可达数十 KB）的 SHA-256 也必须走原生 SO。旧布局里
+ * 每个参数槽仅 1024B、JNI put_arg 截断 1000B，长输入会越界/截断导致验签失败，
+ * 这正是历史上"去掉兜底"后业务全挂的根因之一。扩到 256KB 后：
+ *   - SLOT(i)=i*65536，8 槽 = 0..524287
+ *   - OUT 区、子密钥临时区相应后移（见各导出函数与 JNI/node 定义）
+ * 所有偏移计算仍用 (off,len) 显式传参，边界检查用 sizeof(g_io)，天然安全。 */
+static u8 g_io[262144];
 
 /* 网络层：把若干 (指针,长度) 字段用 '|' 拼成待签名消息，写进 g_msg，返回长度。
    用于把「请求签名 / 隐蔽版本号」等网络协议组装整段下沉到 C++，JS 侧不再拼协议串。 */
@@ -127,7 +164,7 @@ static int xuan_join(u8* dst, const u8* parts[], int lens[], int n) {
 }
 
 extern "C" {
-    int xn_io(void)     { return (int)(u32)(unsigned long)g_io; }
+    int xn_io(void)     { return (int)(u32)(uptr)g_io; }
     int xn_io_cap(void) { return (int)sizeof(g_io); }
     int xn_version(void){ return 2; }
     /* 64 位安全：返回 g_io 的真实指针。WASM 侧仍用 xn_io() 的 32 位截断值，
@@ -139,6 +176,16 @@ extern "C" {
         if (off < 0 || len < 0 || off + len > (int)sizeof(g_io)) return 0;
         if (out < 0 || out + 64 > (int)sizeof(g_io)) return 0;
         u8 d[32]; sha256_raw(g_io + off, len, d);
+        to_hex(d, 32, g_io + out);
+        return 64;
+    }
+
+    /* SHA-256(ASCII hex 解码后的字节) 的 hex 写到 out；返回 64 或 0 */
+    int xn_sha_hexbytes(int off, int len, int out) {
+        if (off < 0 || len < 0 || off + len > (int)sizeof(g_io)) return 0;
+        if (out < 0 || out + 64 > (int)sizeof(g_io)) return 0;
+        u8 d[32];
+        if (!sha256_hexbytes(g_io + off, len, d)) return 0;
         to_hex(d, 32, g_io + out);
         return 64;
     }
@@ -233,8 +280,9 @@ extern "C" {
         const u8** msgs[3] = { p2, p3, p4 };
         int* mlens[3] = { l2, l3, l4 };
         for (int k = 0; k < 3; k++) {
-            /* 拼子密钥到 g_io 尾部临时区（12288 起，容量足够，不与输入/输出冲突） */
-            int kb = 12288;
+            /* 子密钥临时区：258048 起（252KB）。输入槽 0..6 各 32KB 占 0..229375，
+             * OUT=229376（256B），此处在尾部，互不重叠（g_io=256KB）。 */
+            int kb = 258048;
             for (int i = 0; i < seclen; i++) g_io[kb + i] = g_io[secoff + i];
             for (int i = 0; i < 7; i++) g_io[kb + seclen + i] = (u8)SUF[k][i];
             int kl = seclen + 7;

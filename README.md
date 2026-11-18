@@ -5,8 +5,10 @@
 
 > **本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。**
 
-## 本轮更新（1.7.49）
-- **签名层回归修复**：恢复签名三级保险链路（原生 SO 优先 + WASM 兜底 + Web Crypto），修复部分真机原生 SO 不可用时业务接口失效、仅检查更新可用的问题；动态路径回退恢复以保证可用性。
+## 本轮更新（1.7.50）
+- **网络签名层彻底纯原生 C++**：移除 WASM 兜底与 Web Crypto（crypto.subtle）兜底，SHA-256/HMAC/引导验签/路由键派生/四通道请求签名（sign/cal/seq/loc）全部且仅由原生 C++ 实现（Android libxuan_net.so / Windows xuan_native.node）；SO/.node 不可用时 fail-closed（抛 sign engine unavailable），JS 侧无任何明文签名公式。
+- **原生 IO 缓冲扩容**：C++ g_io 16KB→256KB、参数槽 32KB，长 body（网易云 Cookie/身份快照数十 KB）的哈希也走原生；新增 shab 操作支持 APK 切片等二进制内容的字节哈希，替代原 crypto.subtle.digest。
+- **动态路径回退保留**：boot 表失效时走规范路径本地回退，保证业务可用（避免 1.7.48 全挂）。
 - **C++ GLES2 控件级渲染引擎**（`src/cpp/xuan_ui.*`）：卡片/按钮/文本/开关/分隔线/图标染色，
   布局与圆角合成全部在 so 内完成，零第三方渲染依赖（仅链系统 GLES2/EGL/android/m）。
 - **交互决策层**：`xuan_ui_resolve_action` 由 C++ 侧决定"点控件触发什么动作"，
