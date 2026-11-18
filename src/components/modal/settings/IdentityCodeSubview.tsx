@@ -10,7 +10,6 @@ import PasswordGateDialog from './PasswordGateDialog';
 import {
     readIdentityCode, fetchOrCreateIdentity, identityExists, identityRedeem, applyIdentitySnapshot, identitySave,
 } from '../../../services/identityCode';
-import { isCppUIAvailable, openCppIdentityPage } from '../../../services/nativeCppUI';
 import { useGitHubAccountStore } from '../../../stores/useGitHubAccountStore';
 import { useOnlineProviderAccountStore } from '../../../stores/useOnlineProviderAccountStore';
 
@@ -210,18 +209,6 @@ const IdentityCodeSubview: React.FC = () => {
                 >
                     {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? '已复制' : '复制身份授权码'}
                 </button>
-                {/* 全量 C++ 渲染迁移首个落地页：原生 C++/so 渲染的身份授权码界面。
-                    仅 Android 原生端可用；Web/桌面端自动隐藏，不影响原页面。 */}
-                {isCppUIAvailable() && (
-                    <button
-                        type="button"
-                        onClick={() => void openCppIdentityPage(localCode)}
-                        className="w-full flex items-center justify-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-opacity active:opacity-70"
-                        style={{ background: 'rgba(59,130,246,.18)', color: 'rgba(147,197,253,.95)' }}
-                    >
-                        在原生 C++ 界面中查看（渲染迁移预览）
-                    </button>
-                )}
             </div>
 
             {/* 恢复账号：输入密码校验 */}

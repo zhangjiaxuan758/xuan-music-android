@@ -20,7 +20,13 @@ export const XUAN_SERVER = SERVER_URL;
 
 const APP_SIGN_SECRET = SIGN_SECRET;
 
-const ATTEST_PATHS = new Set<string>([EP[43], EP[44], EP[57], EP[58]]);
+// 需要证明会话签名的接口（服务端 require_attest=True，静态签名一律 401 拒绝）。
+// identity 四接口必须与服务端一致，否则 issue/exists/save/redeem 全部走静态签名被拒，
+// 导致授权码下发/校验永远失败（服务端 vault 无记录 -> 输入本机码报“不存在”）。
+const ATTEST_PATHS = new Set<string>([
+  EP[43], EP[44], EP[57], EP[58],
+  '/api/identity/issue', '/api/identity/exists', '/api/identity/save', '/api/identity/redeem',
+]);
 
 export interface XuanTab { id: string; label: string; visible: boolean; order: number }
 export interface XuanDevPick { id: number; name: string; artist: string }
