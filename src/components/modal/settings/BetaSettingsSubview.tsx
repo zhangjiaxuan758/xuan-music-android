@@ -5,18 +5,22 @@
 // ==================================================================
 import React, { useEffect, useRef, useState } from 'react';
 import { ShieldCheck, Copy, ExternalLink, Check, X } from 'lucide-react';
-import { XUAN_SERVER, redeemBetaCode } from '../../../services/xuanServer';
+import { XUAN_SERVER, redeemBetaCode, verifyGateCode } from '../../../services/xuanServer';
+import { useSettingsUiStore } from '../../../stores/useSettingsUiStore';
+import { gatePalette } from '../../gateTheme';
 
 const CODE_LEN = 6;
 const KEYPAD = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
 
-type Phase = 'idle' | 'ok' | 'fail';
+type Phase = 'idle' | 'ok' | 'fail' | 'offline';
 
 /**
  * 测试端下载入口：输入 6 位授权码（__XUAN_ADMIN_DEFAULT_PASSWORD__），通过后下发「小轩音乐测试端」APK 下载链接。
  * 界面与管理端 AdminSettingsSubview 完全一致，仅 redeem 走 /api/redeem-beta 独立动态路径。
  */
 const BetaSettingsSubview: React.FC = () => {
+    const isDaylight = useSettingsUiStore(state => state.isDaylight);
+    const palette = gatePalette(isDaylight);
     const [digits, setDigits] = useState<string[]>(Array(CODE_LEN).fill(''));
     const [phase, setPhase] = useState<Phase>('idle');
     const [checking, setChecking] = useState(false);
@@ -63,19 +67,30 @@ const BetaSettingsSubview: React.FC = () => {
         if (code.length !== CODE_LEN || checking) return;
         setChecking(true);
         try {
+            // 服务端校验口令（动态路径 + 签名）。断网/超时一律提示「无法连接到服务器」，不区分对错。
+            const gate = await verifyGateCode(code);
+            if (gate === 'offline') {
+                setPhase('offline');
+                return;
+            }
+            if (gate !== 'ok') {
+                setPhase('fail');
+                timers.current.push(window.setTimeout(() => {
+                    setDigits(Array(CODE_LEN).fill(''));
+                }, 900));
+                return;
+            }
+            // 口令正确后再领下载链接（同一口令服务端已确认，此处必然成功）
             const res = await redeemBetaCode(code);
             if (res?.url) {
                 setPhase('ok');
                 setBoxFill(Array(CODE_LEN).fill(true));
                 setLink(res.url.startsWith('/') ? `${XUAN_SERVER}${res.url}` : res.url);
             } else {
-                setPhase('fail');
-                timers.current.push(window.setTimeout(() => {
-                    setDigits(Array(CODE_LEN).fill(''));
-                }, 900));
+                setPhase('offline');
             }
         } catch {
-            setPhase('fail');
+            setPhase('offline');
         } finally {
             setChecking(false);
         }
@@ -93,9 +108,9 @@ const BetaSettingsSubview: React.FC = () => {
         window.open(link, '_blank', 'noopener,noreferrer');
     };
 
-    const borderColor = phase === 'fail'
+    const borderColor = (phase === 'fail' || phase === 'offline')
         ? 'rgba(239,68,68,.9)'
-        : 'rgba(255,255,255,.22)';
+        : palette.idleBorder;
 
     return (
         <div className="space-y-5">
@@ -114,7 +129,7 @@ const BetaSettingsSubview: React.FC = () => {
                                 border: `2px solid ${phase === 'ok' && boxFill[i] ? 'rgba(34,197,94,.95)' : borderColor}`,
                                 background: phase === 'ok' && boxFill[i]
                                     ? 'rgba(34,197,94,.14)'
-                                    : (phase === 'fail' ? 'rgba(239,68,68,.08)' : 'rgba(255,255,255,.04)'),
+                                    : (phase === 'fail' ? 'rgba(239,68,68,.08)' : palette.surface),
                                 color: phase === 'ok' ? 'rgba(34,197,94,.95)'
                                     : (phase === 'fail' ? 'rgba(239,68,68,.95)' : 'var(--text-primary)'),
                                 transform: phase === 'ok' && boxFill[i] ? 'translateY(-2px)' : 'none',
@@ -131,7 +146,8 @@ const BetaSettingsSubview: React.FC = () => {
                         className="text-center text-sm font-medium mt-3 transition-opacity duration-300"
                         style={{ color: phase === 'ok' ? 'rgba(34,197,94,.95)' : 'rgba(239,68,68,.95)' }}
                     >
-                        {phase === 'ok' ? '校验通过' : '校验失败'}
+                        {phase === 'ok' ? '校验通过'
+                            : (phase === 'offline' ? '无法连接到服务器，请检查网络后重试' : '校验失败')}
                     </div>
                 )}
             </div>
@@ -143,8 +159,8 @@ const BetaSettingsSubview: React.FC = () => {
                         <button
                             type="button"
                             onClick={doJump}
-                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-white transition-opacity hover:opacity-85"
-                            style={{ background: 'rgba(34,197,94,.85)' }}
+                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-opacity hover:opacity-85"
+                            style={{ background: palette.surfaceStrong, border: `1px solid ${palette.border}`, color: 'var(--text-primary)' }}
                         >
                             <ExternalLink size={14} /> 跳转
                         </button>
@@ -152,7 +168,7 @@ const BetaSettingsSubview: React.FC = () => {
                             type="button"
                             onClick={doCopy}
                             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
-                            style={{ background: 'var(--secondary-bg, rgba(255,255,255,.1))', color: 'var(--text-primary)' }}
+                            style={{ background: 'var(--secondary-bg, ' + palette.surface + ')', color: 'var(--text-primary)' }}
                         >
                             {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? '已复制' : '复制'}
                         </button>
@@ -173,8 +189,8 @@ const BetaSettingsSubview: React.FC = () => {
                             className="flex items-center justify-center text-lg font-medium active:opacity-60 transition-opacity"
                             style={{
                                 height: '48px', borderRadius: '12px',
-                                background: 'rgba(255,255,255,.07)',
-                                border: '1px solid rgba(255,255,255,.10)',
+                                background: palette.surface,
+                                border: `1px solid ${palette.border}`,
                                 color: 'var(--text-primary)',
                             }}
                         >
@@ -192,8 +208,8 @@ const BetaSettingsSubview: React.FC = () => {
                             className="flex items-center justify-center"
                             style={{
                                 width: '48px', height: '40px', borderRadius: '10px',
-                                background: 'rgba(255,255,255,.07)',
-                                border: '1px solid rgba(255,255,255,.10)',
+                                background: palette.surface,
+                                border: `1px solid ${palette.border}`,
                             }}
                         >
                             <X size={18} />
@@ -203,8 +219,13 @@ const BetaSettingsSubview: React.FC = () => {
                         type="button"
                         onClick={() => void submit()}
                         disabled={checking || digits.join('').length !== CODE_LEN}
-                        className="col-span-3 flex items-center justify-center text-sm font-semibold text-white transition-opacity disabled:opacity-40"
-                        style={{ height: '48px', borderRadius: '12px', background: 'rgba(34,197,94,.85)' }}
+                        className="col-span-3 flex items-center justify-center text-sm font-semibold transition-opacity disabled:opacity-40"
+                        style={{
+                            height: '48px', borderRadius: '12px',
+                            background: palette.surfaceStrong,
+                            border: `1px solid ${palette.border}`,
+                            color: 'var(--text-primary)',
+                        }}
                     >
                         {checking ? '校验中…' : '校验'}
                     </button>

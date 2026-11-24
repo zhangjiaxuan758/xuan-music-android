@@ -3,7 +3,7 @@
 // 主服务地址（脱敏占位符，构建/部署时注入真实裸域名）：__XUAN_SERVER_BASE__
 // 本软件为闭源专有软件；未经授权强行逆向、破解、篡改、二次分发或绕过校验，须承担相应法律责任。
 // ==================================================================
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Languages, LayoutList, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useShallow } from 'zustand/react/shallow';
@@ -14,7 +14,7 @@ import { CustomSelect } from '../../shared/CustomSelect';
 import PinnedCommandSettings from './PinnedCommandSettings';
 import { supportsLocalMusicImport } from '../../../platform/runtime';
 import { manualCheckUpdate } from '../../../services/appUpdater';
-import { IS_BETA, publishBetaVersion } from '../../../services/xuanServer';
+import { IS_BETA, publishBetaVersion, getServerConfig, onServerConfigChange } from '../../../services/xuanServer';
 import FrameRateSection from './FrameRateSection';
 
 type GeneralSettingsSubviewProps = {
@@ -42,7 +42,7 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
       setPublishMsg('');
       try {
         const r = await publishBetaVersion();
-        setPublishMsg(r ? '发布成功，正式版将收到更新弹窗' : '发布失败，请稍后重试');
+        setPublishMsg(r.message || '发布失败，请稍后重试');
       } catch {
         setPublishMsg('发布失败，请稍后重试');
       } finally {
@@ -59,6 +59,7 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
         showHomeTabDevRecommend,
         showHomeTabHotChart,
         showHomeTabGufengChart,
+        showAiCall,
         showHomeTabCache,
         handleToggleHomeTabPlaylist,
         handleToggleHomeTabRadio,
@@ -67,6 +68,7 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
         handleToggleHomeTabDevRecommend,
         handleToggleHomeTabHotChart,
         handleToggleHomeTabGufengChart,
+        handleToggleAiCall,
         handleToggleHomeTabCache,
     } = useSettingsUiStore(useShallow(state => ({
         appLanguagePreference: state.appLanguagePreference,
@@ -83,13 +85,27 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
         handleToggleHomeTabDevRecommend: state.handleToggleHomeTabDevRecommend,
         showHomeTabHotChart: state.showHomeTabHotChart,
         showHomeTabGufengChart: state.showHomeTabGufengChart,
+        showAiCall: state.showAiCall,
         showHomeTabCache: state.showHomeTabCache,
         handleToggleHomeTabHotChart: state.handleToggleHomeTabHotChart,
         handleToggleHomeTabGufengChart: state.handleToggleHomeTabGufengChart,
+        handleToggleAiCall: state.handleToggleAiCall,
         handleToggleHomeTabCache: state.handleToggleHomeTabCache,
     })));
 
-    
+    // 服务端权威板块：管理端移除/隐藏某板块后，设置里对应的单项开关也随之消失，
+    // 只有管理端重新打开显示才出现。change 事件驱动实时生效，无需重启。
+    const [serverRev, setServerRev] = useState(0);
+    useEffect(() => onServerConfigChange(() => setServerRev(v => v + 1)), []);
+    const serverTabVisible = (id: string): boolean => {
+        void serverRev;
+        const cfg: any = getServerConfig();
+        const tabs: Array<{ id: string; visible: boolean }> = Array.isArray(cfg?.tabs) ? cfg.tabs : [];
+        const hit = tabs.find(t => t.id === id);
+        // 服务端有明确条目时以它为准；未下发该表（旧服务端）时回退“显示”，不误伤。
+        return hit ? hit.visible !== false : true;
+    };
+
     const getResolvedLanguageLabel = (): string => {
         const lang = i18n.resolvedLanguage;
         if (lang === 'zh-TW' || lang?.startsWith('zh-TW')) return '繁體中文';
@@ -151,6 +167,7 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
                     <LayoutList size={14} /> {t('options.homeTabsVisibility')}
                 </h3>
                 <div className={`rounded-xl border ${settingsCardClass} overflow-hidden`}>
+                    {serverTabVisible('playlist') && (
                     <div className="flex items-center justify-between p-4 border-b border-black/5 dark:border-white/5">
                         <div className="space-y-1">
                             <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -165,7 +182,9 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
                             <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${showHomeTabPlaylist ? 'translate-x-6' : 'translate-x-0'}`} />
                         </button>
                     </div>
+                    )}
 
+                    {serverTabVisible('radio') && (
                     <div className="flex items-center justify-between p-4 border-b border-black/5 dark:border-white/5">
                         <div className="space-y-1">
                             <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -180,7 +199,24 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
                             <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${showHomeTabRadio ? 'translate-x-6' : 'translate-x-0'}`} />
                         </button>
                     </div>
+                    )}
 
+                    <div className="flex items-center justify-between p-4 border-b border-black/5 dark:border-white/5">
+                        <div className="space-y-1">
+                            <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                AI 调用（控制首页 AI 入口显示，关闭后隐藏 AI 按钮）
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => handleToggleAiCall(!showAiCall)}
+                            className={`w-12 h-6 rounded-full p-1 transition-colors shrink-0 ${!showAiCall ? toggleOffBackgroundClass : ''}`}
+                            style={{ backgroundColor: showAiCall ? theme?.secondaryColor || 'rgba(114, 119, 134, 1)' : undefined }}
+                        >
+                            <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${showAiCall ? 'translate-x-6' : 'translate-x-0'}`} />
+                        </button>
+                    </div>
+
+                    {serverTabVisible('cache') && (
                     <div className="flex items-center justify-between p-4 border-b border-black/5 dark:border-white/5">
                         <div className="space-y-1">
                             <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -195,11 +231,12 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
                             <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${showHomeTabCache ? 'translate-x-6' : 'translate-x-0'}`} />
                         </button>
                     </div>
+                    )}
 
                     {([
-                        { label: '显示热歌榜', value: showHomeTabHotChart, toggle: handleToggleHomeTabHotChart },
-                        { label: '显示古风榜', value: showHomeTabGufengChart, toggle: handleToggleHomeTabGufengChart },
-                    ] as const).map(item => (
+                        { id: 'hotChart', label: '显示热歌榜', value: showHomeTabHotChart, toggle: handleToggleHomeTabHotChart },
+                        { id: 'gufengChart', label: '显示古风榜', value: showHomeTabGufengChart, toggle: handleToggleHomeTabGufengChart },
+                    ] as const).filter(item => serverTabVisible(item.id)).map(item => (
                         <div key={item.label} className="flex items-center justify-between p-4 border-b border-black/5 dark:border-white/5">
                             <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{item.label}</div>
                             <button onClick={() => item.toggle(!item.value)}
@@ -227,6 +264,7 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
                         </div>
                     )}
 
+                    {serverTabVisible('devRecommend') && (
                     <div className="flex items-center justify-between p-4">
                         <div className="space-y-1">
                             <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -241,6 +279,7 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
                             <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${showHomeTabDevRecommend ? 'translate-x-6' : 'translate-x-0'}`} />
                         </button>
                     </div>
+                    )}
                 </div>
             </section>
 
@@ -286,8 +325,8 @@ const GeneralSettingsSubview: React.FC<GeneralSettingsSubviewProps> = ({
                                 type="button"
                                 disabled={publishing}
                                 onClick={onPublishBeta}
-                                className="shrink-0 rounded-full px-4 py-2 text-xs font-semibold text-white transition-opacity disabled:opacity-50"
-                                style={{ background: 'rgba(34,197,94,.85)' }}
+                                className="shrink-0 rounded-full px-4 py-2 text-xs font-semibold transition-colors border disabled:opacity-50"
+                                style={{ borderColor: 'var(--accent-color, currentColor)', color: 'var(--accent-color, currentColor)' }}
                             >
                                 {publishing ? '发布中…' : '发布新版本'}
                             </button>

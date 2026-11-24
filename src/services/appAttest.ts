@@ -13,6 +13,7 @@ const XuanNative = registerPlugin<{
   getAppIdentity: (o: { slices: string }) => Promise<AppIdentity>;
   getDeviceKey: () => Promise<{ pubKey: string }>;
   signDevice: (o: { msg: string }) => Promise<{ sig: string }>;
+  getAttestationChain: (o: { challenge: string }) => Promise<{ supported: boolean; chain: string[] }>;
 }>('XuanNative');
 
 export interface AttestSlice { off: number; len: number }
@@ -31,8 +32,27 @@ let clientId = '';
 let appCode = '';
 let sigV2 = false;
 let inFlight: Promise<boolean> | null = null;
+// 握手失败冷却：失败后 60 秒内不再尝试。否则每个请求都要白等一次握手超时，
+// 全部功能「每点一次卡十几秒」。冷却期内直接走静态签名 + 已认证票据请求，
+// 服务端按正版票据放行，功能不受影响。
+let lastHandshakeFail = 0;
+const HANDSHAKE_COOLDOWN_MS = 60000;
 
 const isNative = () => Capacitor.isNativePlatform();
+
+/**
+ * 原生调用保险丝：Android 16（PLE110 等）上部分原生方法（如 getDeviceKey）
+ * 会「挂起」——既不 resolve 也不 reject。一旦挂起，await 它的整条链路永久卡死：
+ * 握手 inFlight 永久占位 → eapi/下载/远端资源等所有请求永久排队 → 表现为
+ * 「榜单永远正在获取、检查更新点了没反应、点好几次才动」。所有原生调用一律
+ * 带超时，超时按失败处理，绝不让任何一条链路永久 pending。
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, label = 'native'): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${label} timeout ${ms}ms`)), ms);
+        p.then(v => { clearTimeout(timer); resolve(v); }, e => { clearTimeout(timer); reject(e); });
+    });
+}
 
 function hex(buf: ArrayBuffer): string {
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -150,14 +170,39 @@ export async function appIdentityLite(): Promise<{ apkFp: string; certFp: string
 type ElectronDevice = {
   devicePubKey?: () => Promise<{ pubKey: string }>;
   deviceSign?: (msg: string) => Promise<{ sig: string }>;
+  attestationChain?: (challenge: string) => Promise<{ supported: boolean; chain: string[] }>;
 };
 function electronDevice(): ElectronDevice {
   return (window as unknown as { electron?: ElectronDevice }).electron || {};
 }
 
+/**
+ * 获取 Key Attestation 证书链（真正的硬件边界）。
+ * challenge 必须来自服务端本次 hello 响应， attestation 证书在 Keystore 生成时即绑定该 challenge，
+ * 服务端据此确认设备公钥来自硬件而非脚本自生成。不支持的设备返回空数组（服务端走兼容逻辑）。
+ */
+export async function attestationChain(challenge: string): Promise<string[]> {
+  if (!challenge) return [];
+  if (isNative()) {
+    try {
+      const r = await withTimeout(XuanNative.getAttestationChain({ challenge }), 6000, 'getAttestationChain');
+      if (r?.supported && Array.isArray(r.chain)) return r.chain;
+    } catch {  }
+    return [];
+  }
+  try {
+    const e = electronDevice();
+    if (e.attestationChain) {
+      const r = await e.attestationChain(challenge);
+      if (r?.supported && Array.isArray(r.chain)) return r.chain;
+    }
+  } catch {  }
+  return [];
+}
+
 export async function devicePubKey(): Promise<string> {
   if (isNative()) {
-    try { const r = await XuanNative.getDeviceKey(); return r.pubKey || ''; } catch { return ''; }
+    try { const r = await withTimeout(XuanNative.getDeviceKey(), 3000, 'getDeviceKey'); return r.pubKey || ''; } catch { return ''; }
   }
   try {
     const e = electronDevice();
@@ -168,7 +213,7 @@ export async function devicePubKey(): Promise<string> {
 
 export async function deviceSign(msg: string): Promise<string> {
   if (isNative()) {
-    try { const r = await XuanNative.signDevice({ msg }); return r.sig || ''; } catch { return ''; }
+    try { const r = await withTimeout(XuanNative.signDevice({ msg }), 3000, 'signDevice'); return r.sig || ''; } catch { return ''; }
   }
   try {
     const e = electronDevice();
@@ -183,11 +228,18 @@ export async function fetchTicketWithProof(): Promise<{ ticket: string; epoch: n
   const n = nonce();
   const headers: Record<string, string> = { 'X-Xuan-Ts': ts, 'X-Xuan-Nonce': n };
   const url = await routeUrl(EP[42]);
-  if (id) {
+  // 静态签名必须无条件携带：它证明请求方持有官方内置签名密钥，服务端据此把
+  // 票据登记为「已认证票据」，eapi / 下载通道才能放行。部分设备（Android 16）
+  // 的原生 getAppIdentity 会失败导致 id 为空，此时若省掉签名，票据会退化成匿名，
+  // 整端功能（榜单/搜索/播放/更新下载）全部失效。签名密钥本就在客户端、服务端
+  // 一直用它验签，无条件携带不降低安全门槛。
+  {
     const bodyHash = await sha256Hex('');
     const key = await sha256Hex(SIGN_SECRET);
     const sign = await hmacSha256Hex(key, `${ts}|${n}|${EP[42]}|${bodyHash}`);
     headers['X-Xuan-Sign'] = sign;
+  }
+  if (id) {
     headers['X-Xuan-Appfp'] = id.apkFp;
     headers['X-Xuan-Certfp'] = id.certFp;
     headers['X-Xuan-Vc'] = String(id.vc);
@@ -229,7 +281,8 @@ async function post(path: string, body: string, ticket: string): Promise<{ statu
 
 async function getIdentity(slices: AttestSlice[]): Promise<AppIdentity> {
   if (isNative()) {
-    return await XuanNative.getAppIdentity({ slices: JSON.stringify(slices) });
+    // 4 秒保险丝：挂起按失败处理，上层 catch 会走无身份降级路径（不影响票据）。
+    return await withTimeout(XuanNative.getAppIdentity({ slices: JSON.stringify(slices) }), 4000, 'getAppIdentity');
   }
   const bridge = (window as unknown as {
     electron?: { appIdentity?: (s: AttestSlice[]) => Promise<AppIdentity> };
@@ -285,10 +338,19 @@ async function handshake(): Promise<boolean> {
     const devMsg = `${hello.data.challenge}|${apkFp}|${certFp}|${hello.data.sid}`;
     const devSig = await deviceSign(devMsg);
 
+    // Key Attestation 硬件证明：用本次 challenge 生成带 attestation 的 Keystore 密钥，
+    // 导出 X509 证书链随 prove 上报。服务端验证链到可信根 + challenge 绑定 + 硬件级，
+    // 脚本自生成 EC 密钥无法伪造这条链，从根本上堵住"自签自验"。
+    // 不支持 attestation 的设备返回空数组，服务端双轨兼容（不阻断听歌）。
+    const attChain = platform === 'android'
+      ? await attestationChain(String(hello.data.challenge || ''))
+      : [];
+
     const proveBody = JSON.stringify({
       sid: hello.data.sid, client, platform, vc, apkFp, certFp,
       slices: got.slices, proof, devicePubKey: devPub, deviceSig: devSig,
       sigV2: devSig && devPub ? 1 : 0,
+      attChain,
     });
     const prove = await post(EP[56], proveBody, ticket);
     if (prove.status !== 200 || !prove.data?.token || !prove.data?.sessionKey) return false;
@@ -306,9 +368,18 @@ async function handshake(): Promise<boolean> {
 
 export async function ensureAttest(): Promise<boolean> {
   if (attestSession()) return true;
+  if (Date.now() - lastHandshakeFail < HANDSHAKE_COOLDOWN_MS) return false;
   if (inFlight) return inFlight;
-  inFlight = handshake().finally(() => { inFlight = null; });
-  return inFlight;
+  // 总保险丝：握手整体最多 12 秒。此前 Android 16 上 getDeviceKey 挂起会让
+  // inFlight 永久占位，fetchServerConfig/eapi/downloadUrl 等（均 await 本函数）
+  // 全部永久卡死——boot 之后一个请求都发不出去、榜单永远「正在获取」、
+  // 检查更新点了没反应。超时后按握手失败处理：进入冷却期，上层改用静态签名
+  // + 已认证票据继续请求，服务端按正版票据放行，功能不受影响。
+  const p = withTimeout(handshake(), 12000, 'handshake').catch(() => false);
+  inFlight = p;
+  const ok = await p.finally(() => { if (inFlight === p) inFlight = null; });
+  if (!ok) lastHandshakeFail = Date.now();
+  return ok;
 }
 
 export function isAttested(): boolean {

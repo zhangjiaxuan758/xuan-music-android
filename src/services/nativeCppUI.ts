@@ -14,6 +14,9 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
  */
 interface XuanNativeCppUI {
   openCppIdentityPage(options: { code: string }): Promise<{ ok?: boolean; error?: string }>;
+  openCppAiPage(options: { thinking?: boolean; search?: boolean }): Promise<{ ok?: boolean; error?: string }>;
+  cppAiPush(options: { json: string }): Promise<{ ok?: boolean }>;
+  cppAiError(options: { msg: string }): Promise<{ ok?: boolean }>;
   cppRenderVersion(): Promise<{ version: string; available: boolean }>;
 }
 
@@ -44,6 +47,27 @@ export async function openCppIdentityPage(code: string): Promise<boolean> {
     const r = await p.openCppIdentityPage({ code });
     return Boolean(r?.ok);
   } catch {
+    return false;
+  }
+}
+
+/** 打开 C++ 渲染的 AI 对话界面；配置由服务端动态下发，这里只透传当前思考/联网开关。 */
+/** 最近一次 openCppAiPage 的诊断信息（供入口提示，定位静默降级原因）。 */
+export let lastCppAIDiag = '';
+
+export async function openCppAiPage(thinking: boolean, search: boolean): Promise<boolean> {
+  const p = getPlugin();
+  if (!p) { lastCppAIDiag = '原生插件未就绪或当前非原生平台'; return false; }
+  try {
+    const r = await p.openCppAiPage({ thinking, search });
+    if (!r?.ok) {
+      lastCppAIDiag = String((r as any)?.error || '原生层返回启动失败');
+      return false;
+    }
+    lastCppAIDiag = 'OK';
+    return true;
+  } catch (e: any) {
+    lastCppAIDiag = String(e?.message || e || '调用原生插件时异常');
     return false;
   }
 }

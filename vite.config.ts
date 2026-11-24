@@ -72,15 +72,26 @@ export default async function viteConfig(_config: ConfigEnv): Promise<UserConfig
 
   // 客户端在线更新依赖真实 versionCode：直接以 android/app/build.gradle 为唯一来源注入，
   // 避免前端里写死的兜底值与 APK 版本漂移，导致「装了新版仍反复弹更新」。
-  let xuanVersionCode = 10625;
+  let xuanVersionCode = 10694;
   let xuanVersionName = '';
   try {
     const gradleText = fs.readFileSync(path.resolve(__dirname, 'android/app/build.gradle'), 'utf-8');
-    const mCode = /versionCode\s+(\d+)/.exec(gradleText);
+    // build.gradle 的 versionCode 可能是「直接数字」或「三元表达式里的默认数字」，
+    // 例如：versionCode (XUAN_BETA=='1' && XUAN_BETA_VC ? ... : 10694)。
+    // 必须同时支持两种写法，否则正则落空 → 兜底旧值 → 装了新版仍反复弹更新。
+    let mCode = /versionCode\s+(\d+)/.exec(gradleText);
+    if (!mCode) mCode = /versionCode\s*\([^:]*:\s*(\d+)\s*\)/.exec(gradleText);
+    if (!mCode) mCode = /versionCode[\s\S]{0,200}?:\s*(\d+)\s*\)/.exec(gradleText);
     if (mCode) xuanVersionCode = Number(mCode[1]);
     const mName = /versionName\s+"([^"]+)"/.exec(gradleText);
-    if (mName) xuanVersionName = mName[1];
+    if (!mName) {
+      const mName2 = /versionName\s*\([^:]*:\s*"([^"]+)"/.exec(gradleText);
+      if (mName2) xuanVersionName = mName2[1];
+    } else xuanVersionName = mName[1];
   } catch { /* 非 Android 工程时保留兜底 */ }
+  // 显式环境变量优先级最高（构建脚本可覆盖）。
+  const envVc = process.env.XUAN_VERSION_CODE?.trim();
+  if (envVc && Number.isFinite(Number(envVc)) && Number(envVc) > 0) xuanVersionCode = Number(envVc);
   // 版本名单一来源：build.gradle 的 versionName（package.json 长期停在旧值，
   // 曾导致每版装完「关于」仍显示同一版本号）。
   const packageVersion = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8')).version;

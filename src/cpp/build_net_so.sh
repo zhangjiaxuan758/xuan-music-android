@@ -44,6 +44,7 @@ for abi in arm64-v8a armeabi-v7a x86_64 x86; do
   "$cxx" -std=c++17 -O2 -fPIC -shared -fvisibility=hidden -ffunction-sections -fdata-sections \
     -static-libstdc++ \
     -Wl,--gc-sections -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack \
+    -Wl,-z,max-page-size=16384 \
     "$SRC_DIR/xuan_net.cpp" "$SRC_DIR/xuan_aes.cpp" "$SRC_DIR/xuan_net_jni.cpp" \
     -o "$out/libxuan_net.so"
   "$TOOLCHAIN/llvm-strip" --strip-unneeded "$out/libxuan_net.so" 2>/dev/null || true

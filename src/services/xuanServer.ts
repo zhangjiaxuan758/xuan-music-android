@@ -56,6 +56,15 @@ export interface XuanConfig {
   features?: Record<string, { allowed: boolean; closed: boolean; hidden: boolean; offText: string }>;
   update: { versionCode: number; versionName: string; apkFile: string; changelog: string; force: boolean };
   updateWindows?: { versionCode: number; versionName: string; exeFile: string; changelog: string; force: boolean };
+  ai?: {
+    enabled: boolean;
+    chat: { endpoint: string; model: string; temperature: number; maxTokens: number };
+    search: { provider: string; maxResults: number };
+    cache: { enabled: boolean; ttl: number; maxEntries: number; stablePrefix: boolean };
+    context: { maxMessages: number; minMessages: number; compressThreshold: number; summaryModel: string };
+    /** DSH（DeepSeek Harness）工作台：动态链接由服务端下发，前端壳按此加载，后端沙箱全在服务端。 */
+    dsh?: { enabled: boolean; url: string; sandboxBase?: string };
+  };
 }
 
 const isNative = () => Capacitor.isNativePlatform();
@@ -229,8 +238,35 @@ export function onServerConfigChange(fn: (c: XuanConfig) => void): () => void {
   return () => { listeners.delete(fn); };
 }
 
+/**
+ * 配置指纹：不只比对 version，还纳入真正影响首页内容的字段（开发者推荐、tabs 显隐/顺序）。
+ * 服务端某些保存路径的 version 递增并不保证可靠，仅按 version 判断会漏掉歌曲增删，
+ * 表现为「管理端改了开发者推荐，客户端要手动点重试才更新」。内容一变就通知订阅者。
+ */
+function configFingerprint(c: XuanConfig): string {
+  try {
+    const anyC = c as unknown as Record<string, unknown>;
+    const picks = anyC.developerPicks;
+    const tabs = anyC.tabs;
+    const tabSig = Array.isArray(tabs)
+      ? (tabs as Array<Record<string, unknown>>).map(t => [t.key, t.visible, t.order])
+      : tabs;
+    // AI 开关/模型/DSH 后端地址变化也要即时生效（管理端改完无需重启客户端）
+    // apiBase 缺失会让 AI 页黑屏，必须纳入指纹，否则热更被指纹相等短路、客户端一直用旧缓存。
+    const ai = (anyC.ai || {}) as Record<string, unknown>;
+    const dsh = (ai.dsh || {}) as Record<string, unknown>;
+    const aiSig = [ai.enabled, (ai.chat as any)?.model, dsh.enabled, dsh.apiBase, dsh.url];
+    return JSON.stringify([anyC.version, picks, tabSig, aiSig]);
+  } catch {
+    try { return String((c as unknown as Record<string, unknown>)?.version); } catch { return ''; }
+  }
+}
+let lastConfigFingerprint = '';
+
 function applyConfig(next: XuanConfig) {
-  if (cfg && next.version === cfg.version) return;
+  const fp = configFingerprint(next);
+  if (cfg && fp === lastConfigFingerprint) return;
+  lastConfigFingerprint = fp;
   cfg = next;
   try { secureSet('xuan_server_config', JSON.stringify(next)); } catch {  }
   
@@ -285,11 +321,21 @@ async function openSSE() {
           const payload = JSON.parse(dataLine);
           if (ev === 'config' && payload.config) applyConfig(payload.config);
           else if (ev === 'config' && payload.version) fetchServerConfig();
+          // AI 配置热更新：带完整 ai 段时直接合入当前配置并通知订阅者，无需重启。
+          else if (ev === 'ai-config' && payload.ai) {
+            if (cfg) applyConfig({ ...cfg, ai: payload.ai } as XuanConfig);
+            else fetchServerConfig();
+          }
 
           // 两段式：测试端监听 'update-beta'（上传即弹），正式端监听 'update'（点发布后才弹）。
           else if (ev === 'update' && !IS_BETA) void checkUpdate(true);
           else if (ev === 'update-beta' && IS_BETA) void checkUpdate(true);
           else if (ev === 'resources') void fetchRemoteResources();
+          // 管理端强制退出：SSE 通道（网页/PC），原生端走 kickcheck 轮询。
+          // 事件带 role + targets（设备指纹 id），由 forcedLogout 服务判断是否命中本机。
+          else if (ev === 'force_logout') {
+            try { window.dispatchEvent(new CustomEvent('xuan:force-logout-sse', { detail: payload })); } catch {  }
+          }
           else if (ev === 'hello' && payload.version && (!cfg || payload.version !== cfg.version)) fetchServerConfig();
         } catch {  }
       }
@@ -302,13 +348,19 @@ async function openSSE() {
 }
 
 let nativePollTimer: number | null = null;
+let nativePollTick = 0;
 function startNativePolling() {
   if (nativePollTimer) return;
+  // 由 4 秒 → 8 秒，显著降低负载/卡顿：配置与资源是延迟敏感项，8 秒仍可接受；
+  // 切回前台会立即主动拉取（见 initXuanServer 的 visibilitychange），因此不影响「实时同步」体验。
+  // 更新检查更不敏感，改为每 4 个 tick（约 32 秒）一次即可，客户端自身另有更新轮询。
   nativePollTimer = window.setInterval(async () => {
+    if (document.visibilityState !== 'visible') return;
+    nativePollTick += 1;
     await fetchServerConfig();
     await fetchRemoteResources();
-    await checkUpdate(false);
-  }, 4000);
+    if (nativePollTick % 4 === 0) await checkUpdate(false);
+  }, 8000);
 }
 
 function scheduleReconnect() {
@@ -449,10 +501,68 @@ export async function redeemBetaCode(code: string): Promise<{ url: string; ttl: 
   return r && typeof (r as any).url === 'string' ? { url: (r as any).url, ttl: Number((r as any).ttl) || 300 } : null;
 }
 
-/** 测试端「发布新版本」：把测试通道 betaUpdate 提升到正式 update，正式端随即收到弹窗。 */
-export async function publishBetaVersion(): Promise<{ ok: boolean; versionCode?: number } | null> {
-  const r = await signedRequest<{ ok: boolean; versionCode?: number }>('POST', '/api/beta/publish', {});
-  return r && r.ok ? r : null;
+/**
+ * 服务端口令校验结果：明确区分「网络不可达 / 口令错误 / 校验通过」。
+ * signedRequest 会把所有网络异常吞成 null，无法区分断网与口令错；
+ * AI 授权码门等必须断网时提示"无法连接到服务器"，故用本函数直连底层请求。
+ * 走 redeem-beta 动态路径 + verifyOnly（只校验、不签发下载链接）。
+ */
+export type GateVerifyResult = 'ok' | 'invalid' | 'offline';
+/** path 默认走测试端；管理端校验码传 '/api/redeem'。 */
+export async function verifyGateCode(code: string, path = '/api/redeem-beta'): Promise<GateVerifyResult> {
+  try {
+    const body = JSON.stringify({ code, verifyOnly: true });
+    const url = await routeUrl(path);
+    if (!url) return 'offline';
+    const headers = await signHeaders('POST', path, body);
+    let status: number;
+    if (isNative()) {
+      const r = await CapacitorHttp.request({
+        method: 'POST', url,
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        data: body, responseType: 'json', connectTimeout: 12000, readTimeout: 12000,
+      });
+      status = r.status;
+    } else {
+      const r = await fetch(url, {
+        method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+        body, credentials: 'omit', cache: 'no-store',
+      });
+      status = r.status;
+    }
+    if (status >= 200 && status < 300) return 'ok';
+    if (status === 403 || status === 401) return 'invalid';
+    return 'offline';
+  } catch {
+    return 'offline';
+  }
+}
+
+/** 测试端「发布新版本」返回结果：result 区分 已发布 / 已是最新版 / 请升级后再试 / 暂无待发布版本。 */
+export interface BetaPublishResult {
+  ok: boolean;
+  result?: 'published' | 'up_to_date' | 'need_upgrade' | 'no_pending' | 'unauthorized';
+  message?: string;
+  versionCode?: number;
+  betaVersionCode?: number;
+}
+
+/**
+ * 测试端「发布新版本」：把测试通道 betaUpdate 提升到正式 update，正式端随即收到弹窗。
+ * 服务端在版本闸门处仍以 HTTP 200 返回结构化结果（ok=false + message），
+ * 这里原样回传，交给 UI 展示“已是最新版 / 请升级后再试”等具体提示，
+ * 不再把所有失败折叠成一个布尔值。
+ */
+export async function publishBetaVersion(): Promise<BetaPublishResult> {
+  const r = await signedRequest<BetaPublishResult>('POST', '/api/beta/publish', {});
+  if (!r) return { ok: false, result: 'unauthorized', message: '发布失败，请稍后重试' };
+  return {
+    ok: !!r.ok,
+    result: r.result,
+    message: r.message || (r.ok ? '发布成功，正式版将收到更新弹窗' : '发布失败，请稍后重试'),
+    versionCode: r.versionCode,
+    betaVersionCode: r.betaVersionCode,
+  };
 }
 
 export async function adminLogin(password: string): Promise<string | null> {

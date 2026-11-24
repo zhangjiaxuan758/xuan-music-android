@@ -143,11 +143,16 @@ export const getCoverAssetUsage = async (): Promise<number> => {
   }
   const directory = await getOpfsCoverDirectory(false);
   if (!directory) return 0;
+  // 当前 lib.dom 组合未含 FileSystemDirectoryHandle 的迭代方法声明，用窄断言补齐
+  const iterable = directory as FileSystemDirectoryHandle & {
+    values(): AsyncIterableIterator<FileSystemHandle>;
+  };
   let total = 0;
-  for await (const entry of directory.values()) {
+  for await (const entry of iterable.values()) {
     if (entry.kind !== 'file') continue;
+    const fileHandle = entry as FileSystemFileHandle;
     try {
-      total += (await entry.getFile()).size;
+      total += (await fileHandle.getFile()).size;
     } catch {
       
     }

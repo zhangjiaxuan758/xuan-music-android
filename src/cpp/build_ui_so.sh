@@ -49,8 +49,9 @@ for abi in arm64-v8a armeabi-v7a x86_64 x86; do
     --sysroot="$SYSROOT" -I"$SRC_DIR" \
     -L"$libdir" \
     "$SRC_DIR/xuan_ui.cpp" "$SRC_DIR/xuan_ui_jni.cpp" \
-    -lGLESv2 -lEGL -landroid -lm \
+    -lGLESv2 -lEGL -landroid -ljnigraphics -lm \
     -Wl,--gc-sections -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack \
+    -Wl,-z,max-page-size=16384 \
     -o "$out/libxuan_ui.so"
   "$TOOLCHAIN/llvm-strip" --strip-unneeded "$out/libxuan_ui.so" 2>/dev/null || true
   echo "[xuan-ui]   -> $out/libxuan_ui.so ($(stat -c%s "$out/libxuan_ui.so") bytes)"

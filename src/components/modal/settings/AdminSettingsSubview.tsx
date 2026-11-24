@@ -5,14 +5,18 @@
 // ==================================================================
 import React, { useEffect, useRef, useState } from 'react';
 import { ShieldCheck, Copy, ExternalLink, Check, X } from 'lucide-react';
-import { XUAN_SERVER, redeemAdminCode } from '../../../services/xuanServer';
+import { XUAN_SERVER, redeemAdminCode, verifyGateCode } from '../../../services/xuanServer';
+import { useSettingsUiStore } from '../../../stores/useSettingsUiStore';
+import { gatePalette } from '../../gateTheme';
 
 const CODE_LEN = 6;
 const KEYPAD = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
 
-type Phase = 'idle' | 'ok' | 'fail';
+type Phase = 'idle' | 'ok' | 'fail' | 'offline';
 
 const AdminSettingsSubview: React.FC = () => {
+    const isDaylight = useSettingsUiStore(state => state.isDaylight);
+    const palette = gatePalette(isDaylight);
     const [digits, setDigits] = useState<string[]>(Array(CODE_LEN).fill(''));
     const [phase, setPhase] = useState<Phase>('idle');
     const [checking, setChecking] = useState(false);
@@ -59,19 +63,31 @@ const AdminSettingsSubview: React.FC = () => {
         if (code.length !== CODE_LEN || checking) return;
         setChecking(true);
         try {
+            // 先走服务端三态校验：断网/超时一律 offline（提示无法连接服务器），不区分对错。
+            const gate = await verifyGateCode(code, '/api/redeem');
+            if (gate === 'offline') {
+                setPhase('offline');
+                return;
+            }
+            if (gate !== 'ok') {
+                setPhase('fail');
+                timers.current.push(window.setTimeout(() => {
+                    setDigits(Array(CODE_LEN).fill(''));
+                }, 900));
+                return;
+            }
+            // 口令正确后再领下载链接（同一口令服务端已确认，此处必然成功）
             const res = await redeemAdminCode(code);
             if (res?.url) {
                 setPhase('ok');
                 setBoxFill(Array(CODE_LEN).fill(true));
                 setLink(res.url.startsWith('/') ? `${XUAN_SERVER}${res.url}` : res.url);
             } else {
-                setPhase('fail');
-                timers.current.push(window.setTimeout(() => {
-                    setDigits(Array(CODE_LEN).fill(''));
-                }, 900));
+                setPhase('offline');
             }
         } catch {
-            setPhase('fail');
+            // 网络异常归为无法连接服务器，不再误报"校验失败"。
+            setPhase('offline');
         } finally {
             setChecking(false);
         }
@@ -89,9 +105,9 @@ const AdminSettingsSubview: React.FC = () => {
         window.open(link, '_blank', 'noopener,noreferrer');
     };
 
-    const borderColor = phase === 'fail'
+    const borderColor = (phase === 'fail' || phase === 'offline')
         ? 'rgba(239,68,68,.9)'
-        : 'rgba(255,255,255,.22)';
+        : palette.idleBorder;
 
     return (
         <div className="space-y-5">
@@ -110,7 +126,7 @@ const AdminSettingsSubview: React.FC = () => {
                                 border: `2px solid ${phase === 'ok' && boxFill[i] ? 'rgba(34,197,94,.95)' : borderColor}`,
                                 background: phase === 'ok' && boxFill[i]
                                     ? 'rgba(34,197,94,.14)'
-                                    : (phase === 'fail' ? 'rgba(239,68,68,.08)' : 'rgba(255,255,255,.04)'),
+                                    : (phase === 'fail' ? 'rgba(239,68,68,.08)' : palette.surface),
                                 color: phase === 'ok' ? 'rgba(34,197,94,.95)'
                                     : (phase === 'fail' ? 'rgba(239,68,68,.95)' : 'var(--text-primary)'),
                                 transform: phase === 'ok' && boxFill[i] ? 'translateY(-2px)' : 'none',
@@ -127,7 +143,8 @@ const AdminSettingsSubview: React.FC = () => {
                         className="text-center text-sm font-medium mt-3 transition-opacity duration-300"
                         style={{ color: phase === 'ok' ? 'rgba(34,197,94,.95)' : 'rgba(239,68,68,.95)' }}
                     >
-                        {phase === 'ok' ? '校验通过' : '校验失败'}
+                        {phase === 'ok' ? '校验通过'
+                            : (phase === 'offline' ? '无法连接到服务器，请检查网络后重试' : '校验失败')}
                     </div>
                 )}
             </div>
@@ -148,7 +165,7 @@ const AdminSettingsSubview: React.FC = () => {
                             type="button"
                             onClick={doCopy}
                             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
-                            style={{ background: 'var(--secondary-bg, rgba(255,255,255,.1))', color: 'var(--text-primary)' }}
+                            style={{ background: 'var(--secondary-bg, ' + palette.surface + ')', color: 'var(--text-primary)' }}
                         >
                             {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? '已复制' : '复制'}
                         </button>
@@ -169,8 +186,8 @@ const AdminSettingsSubview: React.FC = () => {
                             className="flex items-center justify-center text-lg font-medium active:opacity-60 transition-opacity"
                             style={{
                                 height: '48px', borderRadius: '12px',
-                                background: 'rgba(255,255,255,.07)',
-                                border: '1px solid rgba(255,255,255,.10)',
+                                background: palette.surface,
+                                border: `1px solid ${palette.border}`,
                                 color: 'var(--text-primary)',
                             }}
                         >
@@ -188,8 +205,8 @@ const AdminSettingsSubview: React.FC = () => {
                             className="flex items-center justify-center"
                             style={{
                                 width: '48px', height: '40px', borderRadius: '10px',
-                                background: 'rgba(255,255,255,.07)',
-                                border: '1px solid rgba(255,255,255,.10)',
+                                background: palette.surface,
+                                border: `1px solid ${palette.border}`,
                             }}
                         >
                             <X size={18} />

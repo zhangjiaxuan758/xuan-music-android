@@ -15,6 +15,7 @@ const XuanNative = registerPlugin<{
   
   installApk(options: {
     path: string; expectedVersionCode?: number; expectedVersionName?: string;
+    expectedPackageName?: string;
   }): Promise<{ ok: boolean }>;
   getApkVersion(): Promise<{ versionCode: number; versionName: string }>;
   updateMedia(options: MediaOptions): Promise<void>;
@@ -32,6 +33,8 @@ const XuanNative = registerPlugin<{
 export interface MediaOptions {
   title: string; artist: string; playing: boolean; cover?: string | null;
   showFavorite: boolean; liked: boolean;
+  // 流体云/系统媒体卡片：时长、进度（毫秒）、当前歌词行（OPPO/欢太读取展示）
+  duration?: number; position?: number; lyrics?: string;
 }
 
 declare const __XUAN_VERSION_CODE__: number | undefined;
@@ -93,13 +96,25 @@ async function findReadyDownload(info: UpdateInfo): Promise<DownloadedUpdate | n
 }
 
 export async function resolveCurrentVersionCode(): Promise<number> {
+  // 编译期注入的 CURRENT_VERSION_CODE 与本机 APK 的 versionCode 由同一构建脚本产出，
+  // 恒等且可靠。原生 getApkVersion 在部分设备（Android 16）会失败或返回旧会话残留值，
+  // 若盲目信任它会把「已是最新版」误判成「有新版本」→ 打开软件/检查更新反复弹窗。
+  // 取两者最大值：原生读到更高值（用户已升级）时采用它，否则用编译期版本码兜底。
+  let best = CURRENT_VERSION_CODE;
   if (Capacitor.isNativePlatform()) {
     try {
-      const v = await XuanNative.getApkVersion();
-      if (v && Number.isFinite(v.versionCode) && v.versionCode > 0) return v.versionCode;
+      // 2.5 秒保险丝：Android 16 上原生 getApkVersion 可能挂起（既不 resolve 也
+      // 不 reject），若无超时，检查更新会永久 pending → 点击后毫无提示。
+      const v = await Promise.race([
+        XuanNative.getApkVersion(),
+        new Promise<null>(r => setTimeout(() => r(null), 2500)),
+      ]);
+      if (v && Number.isFinite(v.versionCode) && v.versionCode > 0) {
+        best = Math.max(best, v.versionCode);
+      }
     } catch {  }
   }
-  return CURRENT_VERSION_CODE;
+  return best;
 }
 
 export const DEFAULT_CHANGELOG = '修复已知问题，请尽快更新';
@@ -178,7 +193,9 @@ function installForceGuard() {
 setForceGuardRelease(releaseForceGuard);
 
 function showUpdateDialog(info: UpdateInfo, onConfirm: () => void, readyPath?: string) {
-  if (dialogOpen) return;
+  // dialogOpen 是内存态，弹窗若被系统回收/页面重建丢失，它仍可能是 true →
+  // 用户再点检查更新时这里直接 return，表现为「点了没反应」。用真实 DOM 兜底校准。
+  if (dialogOpen && document.getElementById('xuan-update-dialog')) return;
   dialogOpen = true;
 
   const th = udTheme();
@@ -190,7 +207,8 @@ function showUpdateDialog(info: UpdateInfo, onConfirm: () => void, readyPath?: s
     backdropFilter: 'blur(6px)', fontFamily: 'system-ui, -apple-system, sans-serif',
   });
 
-  markOverlay(overlay, 'update-overlay');
+  markOverlay(overlay, 'update-overlay', true); // 持久弹窗：黑边自愈心跳不得误删
+  overlay.id = 'xuan-update-dialog';
   overlay.setAttribute('data-xuan-overlay-at', String(Date.now()));
   const card = el('div', {
     width: 'min(420px, 86vw)', background: th.cardBg, color: th.cardFg,
@@ -264,7 +282,7 @@ function showProgressDialog(titleText?: string): ProgressUI {
     backdropFilter: 'blur(6px)', fontFamily: 'system-ui, -apple-system, sans-serif',
   });
 
-  markOverlay(overlay, 'update-overlay');
+  markOverlay(overlay, 'update-overlay', true); // 持久弹窗：黑边自愈心跳不得误删
   overlay.setAttribute('data-xuan-overlay-at', String(Date.now()));
   const card = el('div', {
     width: 'min(420px, 86vw)', background: th.cardBg, color: th.cardFg,
@@ -745,13 +763,29 @@ export async function manualCheckUpdate(): Promise<void> {
     toast('网页版无需更新');
     return;
   }
-  const info = await checkUpdate(false, desktop ? 'windows' : 'android');
-  
+  // 12 秒保险丝：checkUpdate 底层走 signedRequest，握手未就绪/异常时可能永久
+  // pending（既不 resolve 也不 reject），导致按钮永远停在「检查中…」且无任何提示。
+  // 超时后按失败处理，给用户明确 toast。
+  let info: UpdateInfo | null = null;
+  try {
+    info = await Promise.race([
+      checkUpdate(false, desktop ? 'windows' : 'android'),
+      new Promise<null>(r => setTimeout(() => r(null), 12000)),
+    ]);
+  } catch {
+    info = null;
+  }
+
   if (!info) {
     toast('检查更新失败，请检查网络后重试');
     return;
   }
-  const current = await resolveCurrentVersionCode();
+  let current: number;
+  try {
+    current = await resolveCurrentVersionCode();
+  } catch {
+    current = CURRENT_VERSION_CODE;
+  }
   if (!info.hasApk || info.versionCode <= current) {
     toast('已是最新版本');
     return;

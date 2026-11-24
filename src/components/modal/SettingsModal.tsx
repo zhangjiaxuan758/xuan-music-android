@@ -8,6 +8,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { X, Command, MousePointer2, Keyboard, Settings2, Trash2, Database, Monitor, PlayCircle, Loader2, Server, Check, AlertCircle, FlaskConical, ChevronLeft, ChevronRight, RefreshCw, Download, ExternalLink, Sparkles, Palette, CircleHelp, Languages, Moon, Sun, ShieldCheck, Fingerprint } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getCacheUsageByCategory, clearCacheByCategory, clearAllData } from '../../services/db';
+import { xuanConfirm } from '../../services/xuanDialog';
 import { DualTheme, StageStatus, StageSource, Theme, ThemeMode, type CadenzaTuning, type CappellaEmojiImage, type CappellaTuning, type FumeTuning, type NowPlayingConnectionStatus, type PartitaTuning, type TiltTuning, type StoredCustomLyricsFont, type VisualizerMode } from '../../types';
 import { getNavidromeConfig, saveNavidromeConfig, clearNavidromeConfig, hashPassword, navidromeApi, isNavidromeEnabled, setNavidromeEnabled, getCachedNavidromeServerProfile, refreshNavidromeServerProfile } from '../../services/navidromeService';
 import { NavidromeConfig, NavidromeServerProfile } from '../../types/navidrome';
@@ -690,6 +691,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         }
     }, [activeTab]);
 
+    // 后台缓存了一首歌后（xuan:cache-updated），即时刷新计数，
+    // 不必退出设置页再进来才看到变化。
+    useEffect(() => {
+        const onCacheUpdated = () => {
+            if (activeTab === 'options') void fetchCacheUsage();
+        };
+        window.addEventListener('xuan:cache-updated', onCacheUpdated);
+        return () => window.removeEventListener('xuan:cache-updated', onCacheUpdated);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab]);
+
     const handleClear = async (category: 'playlist' | 'lyrics' | 'cover' | 'media') => {
         setIsCleaning(category);
         await clearCacheByCategory(category);
@@ -698,7 +710,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     };
 
     const handleClearAllCache = async () => {
-        if (confirm(t('options.confirmClearAll'))) {
+        if (await xuanConfirm(t('options.confirmClearAll'))) {
             setIsCleaning('all');
             await clearAllData();
             window.location.reload();
